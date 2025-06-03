@@ -7,7 +7,7 @@ typedef struct job_queue* JobQueue;
 
 /* Returns a handler to a new JobQueue instance.
     Returns NULL on failure.*/
-JobQueue jq_create();
+JobQueue jq_create(size_t max_size);
 
 /* Checks whether JobQueue is empty*/
 int jq_is_empty(JobQueue jobs);
@@ -26,6 +26,6 @@ int jq_del(JobQueue jobs);
 int jq_enqueue(JobQueue jobs,Job job);
 
 /* Dequeues ```job``` from JobQueue.
-    Returns -1 if job not found in ```jobs```.*/
+    Returns 0 on success.*/
 int jq_dequeue(JobQueue jobs,Job* job);
 #endif
