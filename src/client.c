@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include <sys/stat.h>
@@ -14,6 +15,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 int get_listener(short port) {
     struct sockaddr_in host; 
@@ -25,11 +27,11 @@ int get_listener(short port) {
     }
 
     host.sin_family = AF_INET;
-    host.sin_addr.s_addr = htonl(INADDR_ANY);
+    host.sin_addr.s_addr = htonl(INADDR_ANY); //WIF
     host.sin_port = htons(port);
 
     option = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &option, sizeof(option));
 
     if(bind(listen_sock,(struct sockaddr*) &host,sizeof(host)) == -1) {
         perror("bind");
@@ -119,7 +121,7 @@ int pull(char *path, int sock) {
     char buff[PACKET_SIZE];
     char *err_msg;
     size_t offset;
-    printf("1\n");
+
     if (stat(path,&st) != 0) {
         perror("stat");
         err_msg = strerror(errno);
@@ -151,7 +153,6 @@ int pull(char *path, int sock) {
         return -1;
     }
 
-    printf("5?\n");
     close(src);
     return 0;
 }
@@ -210,32 +211,16 @@ int push(header_info *header,int sock) {
     return 0;
 }
 
-int main(int argc, char** argv) {
-    char packet[PACKET_SIZE];
-    header_info header;
-    int port,opt,com_sock,listen_sock;
-    struct sockaddr_in peer; 
-    socklen_t addrlen;
+int handle_coms(int com_sock) {
     ssize_t msg_size;
-
-    opt = getopt(argc,argv,"p:");
-    if(opt == 'p') port = atoi(optarg);
-
-    if (argc != 3 || !port) {
-        fprintf(stderr,"Usage:\n ./client -p <port_number>\n");
-        return -1;
-    }
-    listen_sock = get_listener(port);
-
-    addrlen = sizeof(peer);
-    com_sock = accept(listen_sock,(struct sockaddr*) &peer,&addrlen);
-
+    header_info header;
+    char packet[PACKET_SIZE];
     int flag = 1;
     while(flag) {
-        printf("Waiting for messsage...\n");
         flag = ((msg_size = receive_msg(com_sock,packet)) > 0);
         if(!flag) return -1;
         parse_header(packet,&header);
+        printf("is %s\n",header.path);
 
         switch (header.op)
         {
@@ -243,7 +228,6 @@ int main(int argc, char** argv) {
             list(header.path,com_sock);
             break;
         case PULL:
-            printf("received pull\n");
             pull(header.path,com_sock);
             break;
         case PUSH:
@@ -255,8 +239,56 @@ int main(int argc, char** argv) {
             break;
         }
 
-        printf("Message received: %s\n",packet);
     }
-    
-    
+
+    return 0;
+}
+
+void* handle_peer(void *arg) {
+
+    struct sockaddr_in peer; //maybe i have to change this WIF
+    socklen_t addrlen;
+    int com_sock;
+    int listen_sock = *((int*) arg);
+    addrlen = sizeof(peer);
+
+    while(1) {
+        com_sock = accept(listen_sock,(struct sockaddr*) &peer,&addrlen);
+        if(com_sock < 0) {
+            if (errno == EBADF || errno == EINVAL) {
+                break;
+            }
+            continue;
+        }
+        handle_coms(com_sock);
+        close(com_sock);
+    }
+    return NULL; // WIF
+}
+
+int main(int argc, char** argv) {
+    pthread_t workers[MAX_WORKERS];
+    int port,opt,listen_sock;
+
+    opt = getopt(argc,argv,"p:");
+    if(opt == 'p') port = atoi(optarg);
+
+    if (argc != 3 || !port) {
+        fprintf(stderr,"Usage:\n ./client -p <port_number>\n");
+        return -1;
+    }
+    listen_sock = get_listener(port);
+
+    for(int i = 0; i < MAX_WORKERS;i++) {
+        pthread_create(&workers[i],NULL,handle_peer,(void*) &listen_sock);
+    }
+
+    printf("Running, enter any character to shut down.\n");
+    getc(stdin);
+    close(listen_sock);
+    for(int i = 0; i < MAX_WORKERS;i++) {
+        pthread_join(workers[i],NULL);
+    }
+    printf("Buh bye\n");
+    return -1;
 }

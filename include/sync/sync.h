@@ -12,6 +12,7 @@ typedef enum status {
 
 typedef struct sync_entry {
     char sd[MAX_PATH_SIZE];
+    
     char td[MAX_PATH_SIZE];
     STATUS status;
     time_t sync_timestamp;

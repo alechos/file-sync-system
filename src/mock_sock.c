@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
     }
 
     memset(packet,0,PACKET_SIZE);
-    pull_push(sock1,sock2,"test/test.img.xz");
+    pull_push(sock1,sock2,"test/papapipi.txt");
 
     close(sock1);
     close(sock2);

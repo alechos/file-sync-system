@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 
 #define MAX_BACKLOG 10
+#define MAX_WORKERS 10
 
 typedef enum client_op {
     LIST,
