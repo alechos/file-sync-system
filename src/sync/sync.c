@@ -3,17 +3,52 @@
 #include "sync.h"
 #include "time.h"
 
-SyncEntry create_sync_entry(char* sd,char* td,time_t tm,STATUS st,int wd,unsigned int errs) {
-    if ((!sd) || (!td)||(strlen(sd) > MAX_PATH_SIZE) || (strlen(td) > MAX_PATH_SIZE)) {
-        return default_entry();
-    }
+int parse_sync_entry(char* in, char* dir, char* host, char* port) {
+    char str[MAX_URI_LEN];
+    char *start, *end;
+
+    strcpy(str, in);
+
+    start = str;
+    end = strchr(str, '@');
+    if (end == NULL || start == NULL) return -1;
+
+    *end = '\0';
+
+    snprintf(dir, MAX_PATH_SIZE, "%s", start);
+
+    start = end + 1;
+    end = strchr(start, ':');
+    if (end == NULL || start == NULL) return -1;
+
+    *end = '\0';
+    snprintf(host, MAX_HOST_SIZE, "%s", start);
+
+    start = end + 1;
+    if (*start == '\0') return -1;
+
+    snprintf(port, MAX_PORT_SIZE, "%s", start);
+
+    return 0;
+}
+
+
+SyncEntry create_sync_entry(char* src, char* dst,time_t tm,STATUS st) {
     SyncEntry new;
-    strncpy(new.sd,sd,MAX_PATH_SIZE);
-    strncpy(new.td,td,MAX_PATH_SIZE);
+
+    if(parse_sync_entry(src,&new.sd,&new.sh,&new.sp) == -1) {
+        new.valid = false;
+        return new;
+    }
+
+    if(parse_sync_entry(dst,&new.td,&new.th,&new.tp) == -1) {
+        new.valid = false;
+        return new;
+    }
+
     new.status = st;
     new.sync_timestamp = tm;
-    new.error_count = errs;
-    new.wd = wd;
+    new.error_count = 0;
     new.valid = true;
 
     return new;

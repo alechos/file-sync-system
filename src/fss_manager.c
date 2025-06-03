@@ -23,11 +23,12 @@
 #include <poll.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <pthread.h>
+
 
 #define WATCH_OPTS (IN_MOVED_TO|IN_DELETE | IN_CLOSE_WRITE)
 
 FILE *LOG = NULL;
-volatile sig_atomic_t SIGCHLD_FLAG = 0;
 
 int generate_msg(char*,char*,char*,char*,int,ssize_t);
 int log_and_print(char*,size_t);
@@ -83,30 +84,6 @@ int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQ
     return 0;
 }
 
-/* Initialize named pipes for console communication.
-   Returns -1 on failure.
-*/
-int init_fifos() {
-    // Unlink previous instances if they already exist.
-    if (access(FSS_IN, F_OK) || access(FSS_OUT, F_OK)  == 0) {
-        unlink(FSS_IN);
-        unlink(FSS_OUT);
-    }
-
-    // Ignore SIGPIPE
-    signal(SIGPIPE,SIG_IGN);
-
-    if(mkfifo(FSS_IN,0666) == -1) {
-        perror("mkfifo eror");
-        return -1;
-    }
-    if(mkfifo(FSS_OUT,0666) == -1) {
-        perror("mkfifo eror");
-        return -1;
-    }    
-
-    return 0;
-}
 
 /*  Parses program aguments.
     Returns -1 on failure.
@@ -264,49 +241,7 @@ int issue_job(Job job,WorkerList wl,JobQueue jobs,SyncMem sm) {
     return 0;
 }
 
-/* Processes inotify events, issuing the appropriate Jobs for each event.
-   Returns -1 on failure */
-int process_events(int fd,SyncMem sm,JobQueue jobs,WorkerList workers) {
-    struct inotify_event *event;
-    SyncEntry dir;
-    Job job;
-    ssize_t bytes;
-    char *ptr;
-    char fullpath[MAX_PATH_SIZE];
-    
-    // Maximum size of struct inotify_event
-    int evnt_sz = sizeof(struct inotify_event) + MAX_FILENAME_SIZE + 1;
-    struct inotify_event *buffer = malloc(20*evnt_sz);
 
-    // Read buffer of events.
-    while((bytes = read(fd,buffer,10*evnt_sz)) > 0) {
-        // Reset ptr to buffer read.
-        ptr = (char*) buffer;
-        // While there is data to read
-        while(bytes>0) { 
-            event = (struct inotify_event *) ptr; // Cast raw bytes to inotify_event
-            sm_search_wd(sm,event->wd,&dir);      
-            // A file (and not the dir itself) inside dir has changed.
-            if(event->len != 0) {   
-                if(event->name[0] != '.') {
-                    get_file_path(dir.td,event->name,fullpath);
-                    job = create_job(dir.sd,dir.td,event->name,parse_op(fullpath,event->mask));  
-                    issue_job(job,workers,jobs,sm); 
-                }
-            } 
-            // Decrement bytes proccessed and increment pointer to next inotify_event
-            bytes-=(sizeof(struct inotify_event) + event->len);   // event->len is variable      
-            ptr+=(sizeof(struct inotify_event) + event->len);
-        }
-    }
-
-    free(buffer);
-    return 0;
-}
-void handler(int sig) {
-    //A worker has exited, set the flag
-    SIGCHLD_FLAG = 1;   
-}
 
 /* Extracts details for a completed job into ```char *details``` based on an exec Report
    and a (potentially empty) error buffer.*/
@@ -398,42 +333,6 @@ int broadcast_sync_result(Worker worker, Report report,SyncMem sm_info,int out) 
     if (broadcast(out,msg,strlen(msg)+1) ==-1) return -1;
     if (send_msg(MSG_END,strlen(MSG_END)+1,out) == -1) return -1;
 
-    return 0;
-}
-
-/* Reap finished workers from workerlist ```wl```, collect and broadcast their
-execution report. Also spawns new workers for any queued jobs in ```jobs``` for
-each worker reaped. Parameter ```out``` is the FSS_OUT fifo pipe fd connected with console.*/
-int reap_workers(WorkerList wl,JobQueue jobs,SyncMem sm_info,int out) {
-    Worker worker,*workers;
-    Job job;
-    Report report;
-    char *err_msg;
-    int status,tmp_pid;
-    workers = wl->workers;
-
-    for(int i = 0; i < wl->capacity; i++) {
-        worker = workers[i];
-        if (worker.pid > 0) {
-            tmp_pid = waitpid(worker.pid,&status,WNOHANG);
-            if(tmp_pid == -1 || tmp_pid == 0) continue; // Worker hasn't exited yet
-            
-            if(handle_worker_exit(worker,sm_info,&report,&err_msg) != -1) {
-                free(err_msg);
-                close(worker.pid);
-                if(worker.tracked) { //worker was being tracked so broadcast result
-                    broadcast_sync_result(worker,report,sm_info,out);
-                }
-            } 
-
-            // remove reaped worker and spawn new worker with the assigned job
-            wl_remove(wl,worker);
-            if(!jq_dequeue(jobs,&job)) {
-                spawn(job,wl);
-            }       
-        }
-    }
-    SIGCHLD_FLAG = 0; //reset worker exit signal flag
     return 0;
 }
 
@@ -586,96 +485,19 @@ int console_cancel(int out,Command com, SyncMem sm_info,int fd) {
 
         return -1;
     }
-
+    // WIF ???
     //remove inotify watch for src directory in command
-    if(inotify_rm_watch(fd,entry.wd) != -1) {
-        entry.status = STOPPED;
-        sm_add_entry(sm_info,entry);
-        generate_msg(buff,CANCEL_MON_STR,src,NULL,-1,MAX_MSG_SIZE);
-        broadcast(out,buff,strlen(buff)+1);
-    }
+    //if(inotify_rm_watch(fd,entry.wd) != -1) {
+    //    entry.status = STOPPED;
+    //   sm_add_entry(sm_info,entry);
+    //    generate_msg(buff,CANCEL_MON_STR,src,NULL,-1,MAX_MSG_SIZE);
+    //    broadcast(out,buff,strlen(buff)+1);
+    //}
     send_msg(MSG_END,strlen(MSG_END) + 1,out);
     return 0;
 }
 
 
-/*Handler for status command from the console. Prints on screen and sends to 
-console the status of a directory in ```sm_info```. Returns -1 on error.*/
-int console_status(int out,Command com, SyncMem sm_info) {
-    SyncEntry entry;
-    char stat_name[8],tmstmp[32];
-    char buff[3*MAX_MSG_SIZE] = {0};
-
-    generate_msg(buff,STAT_REQ_STR,com.source,NULL,-1,MAX_MSG_SIZE);
-    print_and_send(out,buff,strlen(buff) + 1);
-
-    get_timestamp(tmstmp,sizeof(tmstmp),-1);
-    if(sm_get_entry(sm_info,&entry,com.source) == -1) {
-        generate_msg(buff,NOT_MON_STR,com.source,NULL,-1,MAX_MSG_SIZE);
-        print_and_send(out,buff,strlen(buff) +1);
-        send_msg(MSG_END,strlen(MSG_END) + 1,out);
-        return -1;
-    }
-
-    get_status_name(entry.status,stat_name);
-    get_timestamp(tmstmp,sizeof(tmstmp),entry.sync_timestamp);
-
-    // Write status report in buff
-    snprintf(buff,sizeof(buff),STAT_INFO_STR,
-        entry.sd,entry.td,
-        tmstmp,
-        entry.error_count,
-        stat_name
-    );
-
-    // Send message to the appropriate channels
-    print_and_send(out,buff,strlen(buff) + 1);
-    send_msg(MSG_END,strlen(MSG_END) + 1,out);
-
-    return 0;
-}
-/* Handler for the sync command from the console. Performs a full sync for the given source
-    directory, waits for completion and also begins monitoring it. If sync job is qued or being
-    executed no sync happens.*/
-int console_sync(int out,Command com,JobQueue jobs, SyncMem sm_info,WorkerList wl,int event_fd) {
-    SyncEntry entry;
-    Job sync_job;
-    time_t time_stamp;
-    int wd,entry_empty;
-    char *dst,*src = com.source;
-    char msg[MAX_MSG_SIZE] = {0};
-
-    entry_empty = (sm_get_entry(sm_info,&entry,com.source) == -1);
-    if(entry_empty) {   //if entry doesn't exist just end the message
-        send_msg(MSG_END,strlen(MSG_END)+1,out);
-        return -1;
-    }
-    dst = entry.td;    
-    time_stamp = time(NULL);
-
-    generate_msg(msg,SYNC_DIR_STR,src,dst,-1,MAX_MSG_SIZE);
-    broadcast(out,msg,strlen(msg) + 1);
-
-    if(entry.status != ACTIVE) {
-        if((wd = inotify_add_watch(event_fd,src,WATCH_OPTS)) != -1 ) {
-            entry = create_sync_entry(src,dst,time_stamp,ACTIVE,wd,0);
-            sm_add_entry(sm_info,entry);
-        }
-    }
-    if((!wl_dir_stat(wl,src) && !jq_in_queue(jobs,src))) { 
-        sync_job = create_job(src,dst,"ALL",FULL);
-        sync_job.tracked = true; //track jobs completion through the pipeline
-        issue_job(sync_job,wl,jobs,sm_info); 
-    }else {
-        //notify in case of sync already in queue or being executed
-        generate_msg(msg,SYNC_PEND_STR,src,NULL,-1,MAX_MSG_SIZE);
-        print_and_send(out,msg,strlen(msg)+1);
-        send_msg(MSG_END,strlen(MSG_END)+1,out);
-    }
-
-    return 0; 
-
-}
 /* Handler for shutdown command from the console. Inititates shutdown and waits
 for all jobs to finish before exiting smoothly.*/
 int console_shutdown(int out,SyncMem sm,WorkerList wl,JobQueue jobs) {
@@ -726,12 +548,8 @@ int process_command(int in,int out,SyncMem sm,JobQueue jobs,WorkerList wl,int wa
     switch (command.com) {
     case ADD:
         return console_add(out,command,jobs,sm,wl,watch_fd);
-    case STATE:
-        return console_status(out,command,sm);
     case CANCEL:
         return console_cancel(out,command,sm,watch_fd);
-    case SYNC:
-        return console_sync(out,command,jobs,sm,wl,watch_fd);
     case SHUTDOWN:
         // If shutdown succesfully return 1, signify shutdown
         if(!console_shutdown(out,sm,wl,jobs)) return 1;
@@ -744,17 +562,21 @@ int process_command(int in,int out,SyncMem sm,JobQueue jobs,WorkerList wl,int wa
     return -1;
 }
 
+pthread_t* create_pool(int n,JobQueue jq) {
+    pthread_t *pool = malloc(n*sizeof(pthread_t));
+
+    for(int i = 0; i < n; i++) {
+        pthread_create(&pool[i],NULL,handle_job,(void*) jq);
+    }
+}
+
 int main(int argc, char **argv) {
-    struct pollfd fds[2];
-    struct sigaction act;
-    WorkerList workers;
+    pthread_t *worker_pool;
     SyncMem watch_dirs;
     JobQueue jobs;
     Job new_job;
-    int max_n,watch_fd,ret,init_com_flag;
-    int fifos[2];
+    int max_n,ret;
     char *logfile = NULL,*cfgfile =NULL;
-    init_com_flag = 0;
     max_n = 5;
 
     if(parse_args(&logfile,&cfgfile,&max_n,argc,argv) < 0) {
@@ -764,69 +586,25 @@ int main(int argc, char **argv) {
     // Create sync_info struct and Job queue stucts
     watch_dirs = sm_create();
     jobs = jq_create();
-    workers = wl_create(max_n);
-
-    // Initialize named pipes FSS_IN and FSS_OUT
-    init_fifos();
-    fifos[0] = open(FSS_IN,O_RDONLY | O_NONBLOCK);
-    if(fifos[0] <= 0) perror("FSS_IN error");
-
+    worker_pool = create_pool(max_n);
     // Initialize system by loading config entries and preparing jobs
-    init_manager(cfgfile,logfile,watch_dirs,jobs,&watch_fd);
+    init_manager(cfgfile,logfile,watch_dirs,jobs,???);
 
-    fds[0].fd = fifos[0];
-    fds[0].events = POLLIN;
-
-    fds[1].fd = watch_fd;
-    fds[1].events = POLLIN;
-
-    memset(&act,0,sizeof(act));
-    sigemptyset(&act.sa_mask);
-    act.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    act.sa_handler = handler;
-    sigaction(SIGCHLD,&act,NULL);
-
-    // Spawn config jobs queued by ini_manager
+    // Spawn config jobs queued by ini_manager CHANGE TO THREAD POOL
     for(int i = 0; i < max_n && !jq_is_empty(jobs); i++) {
         if(jq_dequeue(jobs,&new_job) != -1) {
             spawn(new_job,workers);
         }
     }
 
-    ret = 0;
     while(1) { 
-        //poll for any changes in watched directories or until a signal is received
-        if(SIGCHLD_FLAG || ((ret = poll(fds,2,-1)) == -1)) { 
-
-            // A worker has finished
-            if(SIGCHLD_FLAG) {
-                reap_workers(workers,jobs,watch_dirs,fifos[1]);
-                continue;             
-            } else if (ret < 0) {
-                perror("poll");
-                break;
-            }
-        }
 
         // A new console command has been received
-        if(fds[0].revents & POLLIN) {
-            if(!init_com_flag) {
-                //This is the first communication with the console,initialize...
-                fifos[1] = open(FSS_OUT,O_WRONLY);
-                if(fifos[1] == -1) perror("FSS_OUT error");
-                init_com_flag = 1;
-            }
 
-            if(process_command(fds[0].fd,fifos[1],watch_dirs,jobs,workers,watch_fd) == 1) {
-                break; //shutdwon has been initiated
-            }
-
-        }
-
-        // New event(s) have been recorded
-        if(fds[1].revents & POLLIN) {
-            process_events(fds[1].fd,watch_dirs,jobs,workers);
-        }
+        //This is the first communication with the console,initialize...
+        //if(process_command(fds[0].fd,fifos[1],watch_dirs,jobs,workers,watch_fd) == 1) {
+        //    break; //shutdwon has been initiated
+       // }
     }
 
     //Free resources
@@ -834,8 +612,6 @@ int main(int argc, char **argv) {
     sm_del(watch_dirs);
     jq_del(jobs);
     fclose(LOG);
-    close(fifos[1]);
-    close(fifos[0]);
 
     return 0;
 }

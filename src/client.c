@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
     listen_sock = get_listener(port);
 
     for(int i = 0; i < MAX_WORKERS;i++) {
-        pthread_create(&workers[i],NULL,handle_peer,(void*) &listen_sock);
+        pthread_create(&workers[i],NULL,handle_peer,(void*) &listen_sock); //listen sock is local! WIF
     }
 
     printf("Running, enter any character to shut down.\n");
