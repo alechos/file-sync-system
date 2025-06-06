@@ -4,6 +4,7 @@
 #include <time.h>
 #include <arpa/inet.h>
 #include "utils.h"
+#include "config.h"
 
 int get_timestamp(char *buff,size_t size,time_t now) {
     if(now == -1) now = time(NULL);
@@ -70,6 +71,32 @@ ssize_t send_msg(char *msg,size_t size,int sock_out) {
 
     if(write_buff((char*)&net_size,sizeof(uint32_t),sock_out) == -1) return -1;
     if((total_w = write_buff(msg,size,sock_out)) == -1) return -1;
+
+    return 0;
+}
+
+int parse_uri(char* in, resource_id *uri) {
+    char str[MAX_URI_LEN];
+    char *start, *end;
+
+    strcpy(str, in);
+
+    start = str;
+    end = strchr(str, '@');
+    if (end == NULL || start == NULL) return -1;
+
+    *end = '\0';
+    snprintf(uri->dir, MAX_PATH_SIZE, "%s", start);
+    start = end + 1;
+    end = strchr(start, ':');
+    if (end == NULL || start == NULL) return -1;
+
+    *end = '\0';
+    snprintf(uri->host, MAX_HOST_SIZE, "%s", start);
+    start = end + 1;
+    if (*start == '\0') return -1;
+
+    snprintf(uri->port, MAX_PORT_SIZE, "%s", start);
 
     return 0;
 }

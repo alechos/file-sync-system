@@ -71,7 +71,7 @@ int pull_push(int src,int dst,char *path) {
 
 int main(int argc, char **argv) {
     int sock1,sock2;
-    struct addrinfo* info = NULL;
+    struct addrinfo* info = NULL; //WIF does this need freeing???
     struct addrinfo hint;
     char packet[PACKET_SIZE];
 

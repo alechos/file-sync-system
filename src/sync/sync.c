@@ -1,47 +1,18 @@
 #include <string.h>
 #include <stdio.h>
 #include "sync.h"
-#include "time.h"
-
-int parse_sync_entry(char* in, char* dir, char* host, char* port) {
-    char str[MAX_URI_LEN];
-    char *start, *end;
-
-    strcpy(str, in);
-
-    start = str;
-    end = strchr(str, '@');
-    if (end == NULL || start == NULL) return -1;
-
-    *end = '\0';
-
-    snprintf(dir, MAX_PATH_SIZE, "%s", start);
-
-    start = end + 1;
-    end = strchr(start, ':');
-    if (end == NULL || start == NULL) return -1;
-
-    *end = '\0';
-    snprintf(host, MAX_HOST_SIZE, "%s", start);
-
-    start = end + 1;
-    if (*start == '\0') return -1;
-
-    snprintf(port, MAX_PORT_SIZE, "%s", start);
-
-    return 0;
-}
+#include <time.h>
 
 
 SyncEntry create_sync_entry(char* src, char* dst,time_t tm,STATUS st) {
     SyncEntry new;
 
-    if(parse_sync_entry(src,&new.sd,&new.sh,&new.sp) == -1) {
+    if(parse_uri(src,&new.src) == -1) {
         new.valid = false;
         return new;
     }
 
-    if(parse_sync_entry(dst,&new.td,&new.th,&new.tp) == -1) {
+    if(parse_uri(dst,&new.dst) == -1) {
         new.valid = false;
         return new;
     }
@@ -77,7 +48,7 @@ void print_sync_entry(SyncEntry en) {
         printf("Invalid entry!\n");
         return;
     }
-    printf("%s %s %d %ld %d %d\n",en.sd,en.td,en.status,en.sync_timestamp,en.error_count,en.wd);
+    printf("%s %s %d %ld %d %d\n",en.src.dir,en.dst.dir,en.status,en.sync_timestamp,en.error_count);
 }
 
 SyncEntry default_entry() {

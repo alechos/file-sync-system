@@ -130,10 +130,8 @@ int pull(char *path, int sock) {
         send_msg(err_msg,strlen(err_msg)+1,sock);
         return -1;
     }
-    printf("2\n");
     offset = snprintf(buff,PACKET_SIZE,"%ld ",st.st_size);
     buff[offset++] = ' ';
-    printf("3\n");
 
     src = open(path,O_RDONLY);
     if(!src) {
@@ -144,11 +142,9 @@ int pull(char *path, int sock) {
         send_msg(err_msg,strlen(err_msg)+1,sock);
         return -1;
     }
-    printf("4\n");
 
     send_msg(buff,offset + 1,sock); //send file size
     if (send_file(src,sock) == -1) {
-        printf("I dead...\n");
         close(src);
         return -1;
     }
@@ -164,6 +160,7 @@ int list(char *path,int sock) {
     int offset = 0;
     //WIF: directory doesn't exist?
     dir = opendir(path);
+    
     while((entry = readdir(dir)) != NULL && offset < PACKET_SIZE) {
         if(entry->d_name[0] == '.') continue;
         offset += snprintf(files + offset, PACKET_SIZE - offset, "%s\n", entry->d_name);
@@ -285,6 +282,7 @@ int main(int argc, char** argv) {
 
     printf("Running, enter any character to shut down.\n");
     getc(stdin);
+
     close(listen_sock);
     for(int i = 0; i < MAX_WORKERS;i++) {
         pthread_join(workers[i],NULL);
