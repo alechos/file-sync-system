@@ -1,5 +1,6 @@
 #ifndef UTILS_H
 #define UTILS_H
+#include "config.h"
 #include <unistd.h>
 #include <time.h>
 
@@ -29,7 +30,21 @@ ssize_t receive_msg(int pipe_in,char* buff);
     Returns -1 on error.*/
 ssize_t send_msg(char *msg,size_t size,int pipe_out);
 
+/* Creates a listening socket on ```port```.
+    Returns listening socket, -1 on error .*/
+int get_listener(short port);
+
 /* Parses a unique resource identified ```uri``` from the formatted ```in``` string.
     Returns -1 on error.*/
 int parse_uri(char* in, resource_id *uri);
+
+/* Compare the host,port and dir fields of 2 uris.
+    Returns 1 if ```uri_1``` describes the same dir,host and port as ```uri_2```.
+    Returns 0 otherwise. */
+int compare_uris(resource_id *uri_1,resource_id *uri_2);
+
+/* Connects to a listening peer identified by ```uri``` and returns the socket connection in ```sock```.
+    Returns -1 on error.*/
+int connect_peer(resource_id *uri,int *sock);
+
 #endif

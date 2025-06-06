@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -5,6 +7,10 @@
 #include <arpa/inet.h>
 #include "utils.h"
 #include "config.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
 
 int get_timestamp(char *buff,size_t size,time_t now) {
     if(now == -1) now = time(NULL);
@@ -65,6 +71,7 @@ ssize_t receive_msg(int sock_in,char* buff) {
     return bytes_read;
 }
 
+//WIF regarding the WIF at receive_msg... maybe prohibit sending above packet_size or at least notify of trunct
 ssize_t send_msg(char *msg,size_t size,int sock_out) {
     uint32_t net_size = htonl(size);
     ssize_t total_w;
@@ -97,6 +104,59 @@ int parse_uri(char* in, resource_id *uri) {
     if (*start == '\0') return -1;
 
     snprintf(uri->port, MAX_PORT_SIZE, "%s", start);
+
+    return 0;
+}
+
+int compare_uris(resource_id *uri_1,resource_id *uri_2) {
+    return  ((!strcmp(uri_1->dir,uri_2->dir)) && 
+            (!strcmp(uri_1->host,uri_2->host)) &&
+            (!strcmp(uri_1->port,uri_2->port)));
+}
+
+int get_listener(short port) {
+    struct sockaddr_in host; 
+    int listen_sock,option;
+
+    if((listen_sock = socket(AF_INET,SOCK_STREAM,0)) == -1) {
+        perror("socket");
+        return -1;
+    }
+
+    host.sin_family = AF_INET;
+    host.sin_addr.s_addr = htonl(INADDR_ANY); //WIF
+    host.sin_port = htons(port);
+
+    option = 1;
+    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &option, sizeof(option));
+
+    if(bind(listen_sock,(struct sockaddr*) &host,sizeof(host)) == -1) {
+        perror("bind");
+        return -1;
+    }
+
+    if(listen(listen_sock,MAX_BACKLOG) == -1) {
+        perror("listen");
+        return -1;
+    }
+
+    return listen_sock;
+}
+
+int connect_peer(resource_id *uri,int *sock) {
+    struct addrinfo *info = NULL; //WIF does this need freeing???
+    struct addrinfo hint;
+
+    memset(&hint,0,sizeof(hint));
+    hint.ai_family = AF_INET;
+    hint.ai_socktype = SOCK_STREAM;
+
+    sock = socket(AF_INET,SOCK_STREAM,0);
+    getaddrinfo(uri->host,uri->port,&hint,&info);
+
+    if(connect(sock,(struct sockaddr*) info->ai_addr,info->ai_addrlen) == -1) {
+        return -1;        
+    }
 
     return 0;
 }

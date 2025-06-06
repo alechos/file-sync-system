@@ -12,6 +12,7 @@
 #include "sync_mem.h"
 #include "exec_report.h"
 #include "utils.h"
+
 #include <string.h>
 #include <time.h>
 #include <sys/wait.h>
@@ -53,10 +54,10 @@ int parse_args(char **logfile,char **cfgfile,int *max_n,int *port,size_t *buff_s
             *max_n = strtol(optarg,NULL,10);
             break;
         case 'p':
-            *port = strtol(optarg,NULL,10);
+            *port = optarg;
             break;
         case 'b':
-            *buff_sz = strtol(optarg,NULL,10);
+            *buff_sz = optarg;
             break;
         default:
             return -1;
@@ -204,7 +205,7 @@ COMMAND_TYPE arg_to_comm(char *arg) {
     return INVALID_COM;
 }
 
-/* Converts command to string and stores in line.
+/* Converts string to command and stores in command.
 Returns -1 if command is INVALID_COM.*/
 int parse_command(char *line,Command *command) {
     char *arg;
@@ -216,12 +217,12 @@ int parse_command(char *line,Command *command) {
 
     if(command->com != SHUTDOWN) {
         arg = strtok(NULL," ");
-        snprintf(command->source,MAX_PATH_SIZE,"%s",arg);
+        snprintf(command->source,MAX_URI_LEN,"%s",arg);
     }
 
     if(command->com == ADD) {
         arg = strtok(NULL," ");
-        snprintf(command->destination,MAX_PATH_SIZE,"%s",arg);
+        snprintf(command->destination,MAX_URI_LEN,"%s",arg);
     }
 
     return 0;
@@ -230,7 +231,7 @@ int parse_command(char *line,Command *command) {
 
 /*Handler for add command by console. Begins monitoring for a new or 
 stopped direcotry and executes a full sync job if not already in queue.*/
-int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info,WorkerList wl,int event_fd) {
+int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
     SyncEntry entry;
     Job sync_job;
     time_t time_stamp;
@@ -242,7 +243,7 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info,WorkerList wl
     entry_exists = (sm_get_entry(sm_info,&entry,com.source) != -1);
     time_stamp = (entry_exists) ? entry.sync_timestamp : time(NULL); 
     
-    if (entry_exists && strcmp(entry.td,dst) ) { // New destination doesn't match previous
+    if (entry_exists && strcmp(entry.dst.,dst) ) { // New destination doesn't match previous
         // End message and refuse command...
         send_msg(MSG_END,strlen(MSG_END) + 1,out);
         return -1;
@@ -258,6 +259,7 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info,WorkerList wl
                 generate_msg(msg_buff,ADDED_DIR_STR,src,dst,-1,MAX_MSG_SIZE);
                 broadcast(out,msg_buff,strlen(msg_buff) + 1);
             }
+
             generate_msg(msg_buff,MON_STARTED_STR,src,dst,-1,MAX_MSG_SIZE);
             broadcast(out,msg_buff,strlen(msg_buff) + 1);
         }
@@ -342,27 +344,27 @@ int console_shutdown(int out,SyncMem sm,WorkerList wl,JobQueue jobs) {
 
 /* Proccesses commands passed from the console. 
 Returns -1 on failure, 0 on success and 1 when a shutdown has been issued.*/
-int process_command(int in,int out,SyncMem sm,JobQueue jobs,WorkerList wl,int watch_fd) {
-    char buff[MAX_LINE];
+int process_command(int sock,SyncMem sm,JobQueue jobs) {
+    char buff[PACKET_SIZE];
     Command command;
     ssize_t size;
     // Receive command from console
-    if ((size = receive_msg(in,buff)) > 0) {
+    if ((size = receive_msg(sock,buff)) > 0) {
         buff[size] = 0;
         parse_command(buff,&command);
     }
 
     switch (command.com) {
     case ADD:
-        return console_add(out,command,jobs,sm,wl,watch_fd);
+        return console_add(sock,command,jobs,sm);
     case CANCEL:
-        return console_cancel(out,command,sm,watch_fd);
+        return console_cancel(sock,command,sm);
     case SHUTDOWN:
         // If shutdown succesfully return 1, signify shutdown
-        if(!console_shutdown(out,sm,wl,jobs)) return 1;
+        if(!console_shutdown(sock,sm,jobs)) return 1;
     default:
-        send_msg("Invalid Command\n",17 + 1,out);
-        send_msg(MSG_END,strlen(MSG_END) + 1,out);
+        send_msg("Invalid Command\n",17 + 1,sock);
+        send_msg(MSG_END,strlen(MSG_END) + 1,sock);
         break;
     }
 
@@ -421,23 +423,6 @@ int pull_push(int src,int dst,char *path) {
     
     return transfer_file(src,dst,path,file_size);
 
-}
-int connect_peer(resource_id *uri,int *sock) {
-    struct addrinfo *info = NULL; //WIF does this need freeing???
-    struct addrinfo hint;
-
-    memset(&hint,0,sizeof(hint));
-    hint.ai_family = AF_INET;
-    hint.ai_socktype = SOCK_STREAM;
-
-    sock = socket(AF_INET,SOCK_STREAM,0);
-    getaddrinfo(uri->host,uri->port,&hint,&info);
-
-    if(connect(sock,(struct sockaddr*) info->ai_addr,info->ai_addrlen) == -1) {
-        return -1;        
-    }
-
-    return 0;
 }
 
 void* execute_job(void* arg) {
@@ -556,16 +541,21 @@ int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQ
 }
 
 int main(int argc, char **argv) {
+    struct sockaddr_in manager_addr; //maybe i have to change this WIF
+    socklen_t addrlen;
+
     pthread_t *worker_pool;
     SyncMem watch_dirs;
     JobQueue jobs;
     Job new_job;
+    Command command;
+
     size_t buff_sz;
+    int port,listener_sock,console_sock;
+    int max_n,flag;
+    char cmd_buff[PACKET_SIZE];
 
-    int port;
-    int max_n,ret;
     char *logfile = NULL,*cfgfile =NULL;
-
     max_n = 5;
     buff_sz = 10;
 
@@ -580,17 +570,28 @@ int main(int argc, char **argv) {
 
     // Initialize system by loading config entries and preparing jobs
     init_manager(cfgfile,logfile,watch_dirs,jobs);
-
     worker_pool = spawn_workers(worker_pool,max_n,jobs); // WIF maybe do it after init_manager
 
-    while(1) { 
+    listener_sock = get_listener(port);
+    addrlen = sizeof(manager_addr);
 
-        // A new console command has been received
+    while(1) {
+        console_sock = accept(listener_sock,(struct sockaddr*) &manager_addr,&addrlen);
+        if(console_sock < 0) {
+            if (errno == EBADF || errno == EINVAL) {
+                printf("Failure establishing accepting socket\n");
+                break;
+            } else {
+                continue;
+            }
+        }
 
-        //This is the first communication with the console,initialize...
-        //if(process_command(fds[0].fd,fifos[1],watch_dirs,jobs,workers,watch_fd) == 1) {
-        //    break; //shutdwon has been initiated
-       // }
+        flag = 0;
+        while(flag == 0) {
+            flag = process_command(console_sock,watch_dirs,jobs)
+
+        }
+
     }
 
     //Free resources

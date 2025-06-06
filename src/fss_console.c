@@ -30,58 +30,81 @@ bool loggable(char* line,char* response) {
     return true;
 }
 
+int parse_args(char *log,char *host, char *port, int argc,char **argv) {
+    int opt;
+    while((opt = getopt(argc,argv,"l:h:p"))!= -1) {
+        switch (opt) {
+        case 'l':
+            *log = optarg;
+            break;
+        case 'h':
+            *host = optarg;
+            break;
+        case 'p':
+            *port = optarg;
+            break;
+        default:
+            return -1;
+        }
+    }
+
+    if(!(*log) || !(*host) || !(*port)) {
+        fprintf(stderr,
+            "Usage:\n"
+            "  ./fss_console -l <console=logfile>\n"
+            "                -h <host_IP>\n"
+            "                -p <hist_port\n"
+        );
+        return -1;
+    } 
+
+    return 0;
+}
 int main(int argc,char **argv) {
-    int opt,flag,fifos[2];
-    char line[MAX_LINE],buffer[BUFSIZ];
+    int opt,sock,flag;
+    char host_ip[MAX_HOST_SIZE], host_port[MAX_PORT_SIZE];
+    char packet[PACKET_SIZE],buffer[BUFSIZ];
+    resource_id uri;
     FILE *log;
     char *log_fn = NULL;
     ssize_t size;
     flag = 0;
 
-    signal(SIGPIPE,SIG_IGN);
+    //signal(SIGPIPE,SIG_IGN);
     // Parse arguments
-    opt = getopt(argc,argv,"l:");
-    if(opt == 'l') log_fn = optarg;
+    if (parse_args(log_fn,host_ip,host_port,argc,argv) == -1) return -1;
 
-    if (argc != 3 || !log_fn) {
-        fprintf(stderr,"Usage:\n ./fss_console -l <console_logfile>\n");
+    // Opening pipe to manager
+    if(connect_peer(&uri,&sock) == -1) {
+        printf("Error connecting to host.\n");
         return -1;
     }
 
-    // Opening pipe to manager
     log = fopen(log_fn,"w");
-    fifos[0] = open(FSS_IN,O_WRONLY | O_NONBLOCK);
-    if(fifos[0] <= 0) {
-        printf("Fss Manager not listening.\nExiting...\n");
-        exit(1);
-    }
+    
 
     while(1) {
         printf("\n%s","> ");
-        fgets(line,MAX_LINE,stdin);
+        fgets(packet,PACKET_SIZE,stdin);
 
         // Remove new line
-        line[strcspn(line, "\n")] = 0;
+        packet[strcspn(packet, "\n")] = 0;
 
         // Log command
-        fprintf(log,"Command %s\n",line);
+        fprintf(log,"Command %s\n",packet);
         fflush(log);
-        // Send command to manage
-        if (send_msg(line,strlen(line) + 1,fifos[0]) == -1) {
+
+        // Send command to manager
+        if (send_msg(packet,strlen(packet) + 1,sock) == -1) {
             printf("Error sending command.\nExiting...\n");
             exit(1);
         }
         
-        // Open pipe to read response from manager (if connection hasn't been established already)
-        if (!flag) {
-            fifos[1] = open(FSS_OUT,O_RDONLY);
-            flag = 1;
-        }
 
         // Read and log responses until a whole message group has been received
-        while((size = receive_msg(fifos[1],buffer)) > 0) {
+        while((size = receive_msg(sock,buffer)) > 0) {
             if(!strcmp(buffer,MSG_END)) break;
-            if(loggable(line,buffer)) {
+            if(loggable(packet,buffer)) {
                 fprintf(log,"%s",buffer);
                 fflush(log);
             }
@@ -89,7 +112,7 @@ int main(int argc,char **argv) {
 
         }
         // Close console if shutdown has been issued
-        if(!strcmp(line,"shutdown")) {
+        if(!strcmp(packet,"shutdown")) {
             break;
         }
     }

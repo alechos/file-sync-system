@@ -12,6 +12,7 @@
 #define MAX_LINE 512
 
 
+#define MAX_BACKLOG 10
 #define LIST_OP_STR "LIST %s"
 #define PUSH_OP_STR "PUSH %s %ld "
 #define PULL_OP_STR "PULL %s "

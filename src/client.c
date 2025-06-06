@@ -17,36 +17,6 @@
 #include <fcntl.h>
 #include <pthread.h>
 
-int get_listener(short port) {
-    struct sockaddr_in host; 
-    int listen_sock,option;
-
-    if((listen_sock = socket(AF_INET,SOCK_STREAM,0)) == -1) {
-        perror("socket");
-        return -1;
-    }
-
-    host.sin_family = AF_INET;
-    host.sin_addr.s_addr = htonl(INADDR_ANY); //WIF
-    host.sin_port = htons(port);
-
-    option = 1;
-    setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &option, sizeof(option));
-
-    if(bind(listen_sock,(struct sockaddr*) &host,sizeof(host)) == -1) {
-        perror("bind");
-        return -1;
-    }
-
-    if(listen(listen_sock,MAX_BACKLOG) == -1) {
-        perror("listen");
-        return -1;
-    }
-
-    return listen_sock;
-}
-
-
 /* Converts command passed from console to COMMAND_TYPE.
 Returns INVALID_COM on failure.*/
 CLIENT_OP get_client_op(char *op) {

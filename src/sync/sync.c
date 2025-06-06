@@ -25,6 +25,7 @@ SyncEntry create_sync_entry(char* src, char* dst,time_t tm,STATUS st) {
     return new;
 }
 
+
 int get_status_name(STATUS status,char *buff) {
     switch (status)
     {

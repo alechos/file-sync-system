@@ -6,9 +6,7 @@
 // Command type enum
 typedef enum command_type {
     ADD,
-    STATE,
     CANCEL,
-    SYNC,
     SHUTDOWN,
     INVALID_COM
 } COMMAND_TYPE;
@@ -16,7 +14,7 @@ typedef enum command_type {
 // Command struct for console/manager communication 
 typedef struct command {
     COMMAND_TYPE com;
-    char source[MAX_PATH_SIZE];
-    char destination[MAX_PATH_SIZE];
+    char source[MAX_URI_LEN];
+    char destination[MAX_URI_LEN];
 } Command;
 #endif

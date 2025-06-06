@@ -41,7 +41,7 @@ unsigned long linear_probe(SyncEntry* entries,char* key,size_t sz) {
     index = hash((unsigned char*) key)%(sz);
 
     for(int i=0;i<sz;i++) {
-        entry_key = entries[index].sd;
+        entry_key = entries[index].src.;
         if((!entries[index].valid)||(strcmp(key,entry_key)==0)) {
             break;
         }
