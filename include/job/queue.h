@@ -16,8 +16,8 @@ int jq_is_empty(JobQueue jobs);
 int jq_size(JobQueue jobs);
 
 /* Linear search over jobs in JobQueue.
-    Returns 1 if job on ```src``` was found, 0 otherwise.*/
-int jq_in_queue(JobQueue jobs,char* src);
+    Returns 1 if job on ```header``` was found, 0 otherwise.*/
+int jq_in_queue(JobQueue jobs,Job *job);
 
 /* Frees JobQueue.*/
 int jq_del(JobQueue jobs);
@@ -28,4 +28,14 @@ int jq_enqueue(JobQueue jobs,Job job);
 /* Dequeues ```job``` from JobQueue.
     Returns 0 on success.*/
 int jq_dequeue(JobQueue jobs,Job* job);
+
+/* Cancels any job synchronizing ```dir``` from any host.
+    Returns 0 on success, -1 if no such job was found */
+int jq_cancel(JobQueue jobs,char* dir);
+
+/* Initiates shutdown of job processing.
+    Returns 0 on success.*/
+int jq_shutdown(JobQueue jobs);
+
+
 #endif

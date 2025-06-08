@@ -82,6 +82,17 @@ ssize_t send_msg(char *msg,size_t size,int sock_out) {
     return 0;
 }
 
+int uri_string(resource_id *id,char* fn,char* str) {
+    
+    if(fn == NULL) {
+        snprintf(str,MAX_URI_LEN,"%s@%s:%s",id->dir,id->host,id->port);
+    } else {
+        snprintf(str,MAX_URI_LEN,"%s/%s@%s:%s",id->dir,fn,id->host,id->port);
+    }
+
+    return 0;
+}
+
 int parse_uri(char* in, resource_id *uri) {
     char str[MAX_URI_LEN];
     char *start, *end;

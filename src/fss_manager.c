@@ -33,37 +33,38 @@
 
 FILE *LOG = NULL;
 
-int generate_msg(char*,char*,char*,char*,int,ssize_t);
-int log_and_print(char*,size_t);
+int generate_msg(char*,char*,char*,char*,ssize_t);
+int log_and_print(char*);
 int broadcast(int,char*,size_t);
 
 /*  Parses program aguments.
-    Returns -1 on failure.
-*/
+    Returns -1 on failure. */
 int parse_args(char **logfile,char **cfgfile,int *max_n,int *port,size_t *buff_sz,int argc,char **argv) {
     int opt;
-    while((opt = getopt(argc,argv,"l:c:n:p:b"))!= -1) {
+
+    while((opt = getopt(argc,argv,"l:c:n:p:b:"))!= -1) {
         switch (opt) {
-        case 'l':
+        case 'l': //parse logfile name
             *logfile = optarg;
             break;
-        case 'c':
+        case 'c': //parse config file name
             *cfgfile = optarg;
             break;
-        case 'n':
+        case 'n':   //parse max number of woekrs
             *max_n = strtol(optarg,NULL,10);
             break;
-        case 'p':
+        case 'p': //parse port
             *port = optarg;
             break;
-        case 'b':
+        case 'b': //parse job queue slot count
             *buff_sz = optarg;
             break;
-        default:
+        default:  //invalid format
             return -1;
         }
     }
 
+    //WIF wrong fromat?? maybe fix up there? ^^^
     if(!(*logfile) || !(*cfgfile)) {
         fprintf(stderr,
             "Usage:\n"
@@ -98,53 +99,56 @@ int get_file_path(char *dir,char *filename,char *full_path) {
 
 /* Extracts details for a completed job into ```char *details``` based on an exec Report
    and a (potentially empty) error buffer.*/
-int extract_details(Job job,Report report,char *err_msg,char *details) {
-    if(!strcmp(job.fn,"ALL")) {
-        if(report.skipped == 0) {
-            //All files copied
-            snprintf(details,MAX_MSG_SIZE,"%d files copied",report.copied);
-        } else {
-            //File was skipped
-            snprintf(details,MAX_MSG_SIZE,"%d files copied, %d skipped",report.copied,report.skipped);
-        }
-        return 0;
+int extract_details(Job job,Report report,char *err_msg,char *pulled,char* pushed) {
+
+    //Extract pull op details
+    if(report.pulled < 0) { //pull error occured
+        snprintf(pulled,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
+    } else {
+        snprintf(pulled,MAX_MSG_SIZE,"%zd bytes pulled",report.pulled);
     }
 
-    if(report.err_len == 0) {
-        //No errors
-        snprintf(details,MAX_MSG_SIZE,"File: %s",job.fn);
+    //Extract push op details
+    if(report.pushed < 0) { //push error occured
+        snprintf(pushed,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
     } else {
-        //Errors have been recorded
-        snprintf(details,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
+        snprintf(pushed,MAX_MSG_SIZE,"%zd bytes pushed",report.pulled);
     }
 
     return 0;
 }
 
 /* Writes a log entry for a completed job in the loaded logfile LOG.*/
-int log_job(Job job,Report report,char *err_msg,pid_t pid) {
-    char details[MAX_MSG_SIZE],tmstmp[32],op_name[9],result[32];
+int log_job(Job job,Report report,char *err_msg,pthread_t thread_id) {
+    char tmstmp[32],result[32];
+    char pulled[MAX_MSG_SIZE],pushed[MAX_MSG_SIZE];
+    char src_uri[MAX_URI_LEN], dst_uri[MAX_URI_LEN];    
 
     switch (report.status) {
     case SUCCESS:
         strcpy(result,"SUCCESS");
         break;
-    case PARTIAL:
-        strcpy(result,"PARTIAL");
-        break;
     case ERROR:
         strcpy(result,"ERROR");
         break;
+    default:
+        return -1;
     }
-    get_op_name(job.op,op_name);
+
     get_timestamp(tmstmp,32,-1);
-    extract_details(job,report,err_msg,details);
+
+    extract_details(job,report,err_msg,pulled,pushed);
+
+    uri_string(&job.src,job.fn,src_uri);
+    uri_string(&job.dst,job.fn,dst_uri);
+
     //Log entry
-    fprintf(LOG,LOG_ENTRY_STR,tmstmp,job.sd,job.td,pid,op_name,result,details);
+    fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,thread_id,"PULL",result,pulled);
+    fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,thread_id,"PUSH",result,pushed);
+
     fflush(LOG);
     return 0;
 }
-
 
 /* Broadcast message ```msg``` of length ```len``` to stdout,the log and to the console
     connected through ```out```.*/
@@ -159,7 +163,7 @@ int broadcast(int out,char* msg,size_t len) {
 }
 
 /* Only log and print message.*/
-int log_and_print(char *msg,size_t len) {
+int log_and_print(char *msg) {
     if(fprintf(LOG,"%s",msg) < 0) return -1;
     printf("%s",msg);
     return 0;
@@ -176,21 +180,19 @@ int print_and_send(int out,char *msg,size_t len) {
 }
 
 /*Generates a log,console,stdout message depending on parameters passed
-    Writes message into ```buff``` bsed on format string ```frmt_str```.*/
-int generate_msg(char *buff,char *frmt_str,char *src,char *dst,int errs,ssize_t size) {
+    Writes message into ```buff``` bsed on format string ```frmt_str```.
+    Returns -1 on error. */
+int generate_msg(char *buff,char *frmt_str,char *src,char *dst,ssize_t size) {
     char timestmp[32] = {0};
     get_timestamp(timestmp,size,-1);
 
-    if(!src) { //
+    if(!src) { //default timestamped string
         snprintf(buff,size,frmt_str,timestmp);
-        return 0;
-    } else if(!dst) {
+    } else if(!dst) { //timestamped source string
         snprintf(buff,size,frmt_str,timestmp,src);
-      
-    } else if(size == -1) {
-        snprintf(buff,MAX_MSG_SIZE,frmt_str,timestmp,src,dst);
-    } else {
-        snprintf(buff,size,frmt_str,timestmp,src,dst,errs);
+    } else { //full timestamped source-dist string
+        snprintf(buff,size,frmt_str,timestmp,src,dst);
+        return -1;
     }
 
     return 0;
@@ -211,15 +213,19 @@ int parse_command(char *line,Command *command) {
     char *arg;
     arg = strtok(line," ");
     command->com = arg_to_comm(arg);
+    
+    // Return in case of invalid command
     if(command->com == INVALID_COM) {
         return -1;
     }
 
+    // In case command isn't shutdown a source field exists
     if(command->com != SHUTDOWN) {
         arg = strtok(NULL," ");
         snprintf(command->source,MAX_URI_LEN,"%s",arg);
     }
 
+    // If the command is an ADD command a destination is also present
     if(command->com == ADD) {
         arg = strtok(NULL," ");
         snprintf(command->destination,MAX_URI_LEN,"%s",arg);
@@ -229,50 +235,58 @@ int parse_command(char *line,Command *command) {
 
 }
 
-/*Handler for add command by console. Begins monitoring for a new or 
-stopped direcotry and executes a full sync job if not already in queue.*/
+/*  Handler for add command by console. Begins syncing of a new direcotry 
+    by filling the jobs queue with the directory's contents. 
+    Returns -1 on failure.*/
+
 int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
     SyncEntry entry;
     Job sync_job;
-    time_t time_stamp;
-    int wd,entry_exists;
-    char *src = com.source;
-    char *dst = com.destination;
+    resource_id src_uri,dst_uri;
+    int peer_sock,entry_exists;
+    char list_buff[PACKET_SIZE], file_path[MAX_PATH_SIZE];
     char msg_buff[MAX_MSG_SIZE] = {0};
 
-    entry_exists = (sm_get_entry(sm_info,&entry,com.source) != -1);
-    time_stamp = (entry_exists) ? entry.sync_timestamp : time(NULL); 
+    if(parse_uri(com.source,&src_uri) == -1) return -1;
+    if(parse_uri(com.destination,&dst_uri) == -1) return -1;
+
+    entry_exists = (sm_get_entry(sm_info,&entry,&src_uri) != -1);
     
-    if (entry_exists && strcmp(entry.dst.,dst) ) { // New destination doesn't match previous
+    if (entry_exists && !compare_uris(&entry.dst,&dst_uri) ) { // New destination doesn't match previous
         // End message and refuse command...
         send_msg(MSG_END,strlen(MSG_END) + 1,out);
         return -1;
     }
-    // If entry is not in sm_info or it's inactive start monitoring
-    if(!entry_exists || entry.status != ACTIVE) {
-        if((wd = inotify_add_watch(event_fd,src,WATCH_OPTS)) != -1 ) {
-            entry = create_sync_entry(src,dst,time_stamp,ACTIVE,wd,0);
-            sm_add_entry(sm_info,entry);
-            
-            //if entry doesn't exist already notify all channels
-            if(!entry_exists) {
-                generate_msg(msg_buff,ADDED_DIR_STR,src,dst,-1,MAX_MSG_SIZE);
-                broadcast(out,msg_buff,strlen(msg_buff) + 1);
-            }
 
-            generate_msg(msg_buff,MON_STARTED_STR,src,dst,-1,MAX_MSG_SIZE);
-            broadcast(out,msg_buff,strlen(msg_buff) + 1);
+    //connect to source peer
+    if(connect_peer(&src_uri,&peer_sock) == -1) return -1;
+
+    // add sync entry
+    entry = create_sync_entry(com.source,com.destination,time(NULL),ACTIVE);
+    sm_add_entry(sm_info,entry);
+    //WIF msg_buff must be smaller than PACKET_SIZE
+
+    //get dir list from courcce peer
+    get_list(list_buff,src_uri.dir,peer_sock);
+
+    //read filenames from list line by line. get_buff_line consumes the buffer!
+    while(get_buff_line(file_path,&list_buff) != -1) {
+
+        //create a sync_job for read file name from source
+        sync_job = create_job(&src_uri,&dst_uri,file_path);  
+
+        //if file already in queue notify and skip
+        if(jq_in_queue(jobs,&sync_job)) {
+            snprintf(file_path,MAX_PATH_SIZE,"%s/%s",src_uri.dir,file_path);
+            generate_msg(msg_buff,IN_QUEUE_STR,file_path,NULL,MAX_MSG_SIZE);
+            print_and_send(out,msg_buff,strlen(msg_buff)+1);  
+            continue;      
         }
-    }
-    
-    // if not actively syncing source directory, execute a full sync
-    if(!entry_exists || !wl_dir_stat(wl,src) || jq_in_queue(jobs,src)) {
-        sync_job = create_job(src,dst,"ALL",FULL);
-        issue_job(sync_job,wl,jobs,sm_info);
-    } else {
-        //notify in case of sync already in queue or being executed
-        generate_msg(msg_buff,IN_QUEUE_STR,src,NULL,-1,MAX_MSG_SIZE);
-        print_and_send(out,msg_buff,strlen(msg_buff)+1);
+
+        //add job in queue and notify
+        jq_enqueue(jobs,sync_job);
+        generate_msg(msg_buff,ADDED_DIR_STR,com.source,com.destination,MAX_MSG_SIZE);
+        broadcast(out,msg_buff,strlen(msg_buff) + 1);
     }
 
     send_msg(MSG_END,strlen(MSG_END) + 1,out);
@@ -281,27 +295,23 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
 }
 
 /* Handler for cancel command from the console.
-Returns -1 on error. Cancels monitoring for an existing directory.*/
-int console_cancel(int out,Command com, SyncMem sm_info,int fd) {
+Returns -1 on error.Cancels synchornization of files in queue.*/
+int console_cancel(int out,Command com, SyncMem sm_info,JobQueue jobs) {
     SyncEntry entry;
-    char *src = com.source;
     char buff[MAX_MSG_SIZE] = {0};
 
-    if(sm_get_entry(sm_info,&entry,src) == -1 || entry.status != ACTIVE) {
-        generate_msg(buff,NOT_MON_STR,src,NULL,-1,MAX_MSG_SIZE);
+    //cancel jobs matching source dir
+    if(jq_cancel(jobs,com.source) == -1) {
+        //notify in case the dir doesnt exist
+        generate_msg(buff,NOT_MON_STR,com.source,NULL,MAX_MSG_SIZE);
         print_and_send(out,buff,strlen(buff) + 1);
-        send_msg(MSG_END,strlen(MSG_END) + 1,out);
-
+        send_msg(MSG_END,strlen(MSG_END) + 1,out);    
         return -1;
     }
-    // WIF ???
-    //remove inotify watch for src directory in command
-    //if(inotify_rm_watch(fd,entry.wd) != -1) {
-    //    entry.status = STOPPED;
-    //   sm_add_entry(sm_info,entry);
-    //    generate_msg(buff,CANCEL_MON_STR,src,NULL,-1,MAX_MSG_SIZE);
-    //    broadcast(out,buff,strlen(buff)+1);
-    //}
+    //notify successfull cancelation
+    generate_msg(buff,CANCEL_MON_STR,com.source,NULL,MAX_MSG_SIZE);
+    broadcast(out,buff,strlen(buff)+1);
+
     send_msg(MSG_END,strlen(MSG_END) + 1,out);
     return 0;
 }
@@ -309,32 +319,30 @@ int console_cancel(int out,Command com, SyncMem sm_info,int fd) {
 
 /* Handler for shutdown command from the console. Inititates shutdown and waits
 for all jobs to finish before exiting smoothly.*/
-int console_shutdown(int out,SyncMem sm,WorkerList wl,JobQueue jobs) {
+int console_shutdown(int out,SyncMem sm,JobQueue jobs,pthread_t *pool,size_t thread_slots) {
     char buff[MAX_MSG_SIZE] = {0};
     int sig;
     sigset_t mask;
 
-    generate_msg(buff,MAN_SHUTDOWN_STR,NULL,NULL,-1,MAX_MSG_SIZE);
+    generate_msg(buff,MAN_SHUTDOWN_STR,NULL,NULL,MAX_MSG_SIZE);
     print_and_send(out,buff,strlen(buff) + 1);
 
-    generate_msg(buff,WORKER_WAIT_STR,NULL,NULL,-1,MAX_MSG_SIZE);
+    generate_msg(buff,WORKER_WAIT_STR,NULL,NULL,MAX_MSG_SIZE);
     print_and_send(out,buff,strlen(buff) + 1);
 
-    generate_msg(buff,QUEUE_WAIT_STR,NULL,NULL,-1,MAX_MSG_SIZE);
+    generate_msg(buff,QUEUE_WAIT_STR,NULL,NULL,MAX_MSG_SIZE);
     print_and_send(out,buff,strlen(buff) + 1);
 
-    // prepare SIGCHLD for sigwait
-    sigemptyset(&mask);
-    sigaddset(&mask,SIGCHLD);
-    sigprocmask(SIG_BLOCK,&mask,NULL);
+    // wait till job_queue empties and signal shutdown...
+    jq_shutdown(jobs);
 
-    // handle remaining jobs by emptying the worker list and the job queue
-    while((wl->size + jq_size(jobs)) > 0) {
-        sigwait(&mask,&sig);    // When SIGCHLD is received reap childs that exited
-        reap_workers(wl,jobs,sm,out);
+    //join threads
+    for(int i = 0; i < thread_slots; i++) {
+        pthread_join(pool[i],NULL);
     }
 
-    generate_msg(buff,SHUTDOWN_COMPLETE_STR,NULL,NULL,-1,MAX_MSG_SIZE);
+    //notify shutdown completion
+    generate_msg(buff,SHUTDOWN_COMPLETE_STR,NULL,NULL,MAX_MSG_SIZE);
     print_and_send(out,buff,strlen(buff) + 1);
 
     send_msg(MSG_END,strlen(MSG_END)+1,out);
@@ -344,10 +352,11 @@ int console_shutdown(int out,SyncMem sm,WorkerList wl,JobQueue jobs) {
 
 /* Proccesses commands passed from the console. 
 Returns -1 on failure, 0 on success and 1 when a shutdown has been issued.*/
-int process_command(int sock,SyncMem sm,JobQueue jobs) {
+int process_command(int sock,size_t slots,SyncMem sm,JobQueue jobs,pthread_t *pool) {
     char buff[PACKET_SIZE];
     Command command;
     ssize_t size;
+
     // Receive command from console
     if ((size = receive_msg(sock,buff)) > 0) {
         buff[size] = 0;
@@ -358,10 +367,10 @@ int process_command(int sock,SyncMem sm,JobQueue jobs) {
     case ADD:
         return console_add(sock,command,jobs,sm);
     case CANCEL:
-        return console_cancel(sock,command,sm);
+        return console_cancel(sock,command,sm,jobs);
     case SHUTDOWN:
         // If shutdown succesfully return 1, signify shutdown
-        if(!console_shutdown(sock,sm,jobs)) return 1;
+        if(!console_shutdown(sock,sm,jobs,pool,slots)) return 1;
     default:
         send_msg("Invalid Command\n",17 + 1,sock);
         send_msg(MSG_END,strlen(MSG_END) + 1,sock);
@@ -371,39 +380,51 @@ int process_command(int sock,SyncMem sm,JobQueue jobs) {
     return -1;
 }
 
-int transfer_file(int src,int dst,char *path,ssize_t file_size) {
+int transfer_file(int src,int dst,char *path,ssize_t file_size,Report *report) {
     char buffer[PACKET_SIZE];
     char header[PACKET_SIZE];
 
     ssize_t total_r = 0;
+    report->status = ERROR;
 
     while(file_size > 0 && (total_r = receive_msg(src,buffer)) > 0 ){
-        if(!strcmp(buffer,MSG_END)) {
-            send_msg(MSG_END,strlen(MSG_END)+1,dst);
-            close(src);
-            close(dst);
+        if(!strcmp(buffer,MSG_ERR)) { //error pulling!
+            report->pulled = -1;
+            report->status = ERROR;
+            receive_msg(src,report->err_msg); //receive error message
+            send_msg(MSG_END,strlen(MSG_END)+1,dst); //Terminate destination client
             return -1;
         }
+        report->pulled+=total_r;
+
         snprintf(header,PACKET_SIZE,PUSH_OP_STR,path,total_r);
         send_msg(header,strlen(header) + 1,dst);
+
+        if(!strcmp(buffer,MSG_ERR)) { //error pushing!
+            report->pushed = -1;
+            report->status = ERROR;
+            receive_msg(src,report->err_msg); //receive error message
+            return -1;
+        }
+
         send_msg(buffer,total_r,dst);
         file_size-=total_r;
 
+        report->pushed+=total_r;
+
     }
-    // WIF: what about other errors here??
+    //signal file transmission over
     if(file_size <= 0) {
+        report->status = SUCCESS;
         snprintf(header,PACKET_SIZE,PUSH_OP_STR,path,0);
         send_msg(header,strlen(header) + 1,dst);
         return 0;
     }
-    //send_msg(HEADER)
-    //close(src);
-    //close(dst);
-    //WIF: client isnt notified?
+
     return -1;
 }
 
-int pull_push(int src,int dst,char *path) {
+int pull_push(int src,int dst,char *path,Report *report) {
     char buff[PACKET_SIZE];
     ssize_t file_size;
     char *end_ptr;
@@ -416,12 +437,15 @@ int pull_push(int src,int dst,char *path) {
     file_size = strtol(buff,&end_ptr,10);
 
     if(file_size == -1) {
-        receive_msg(src,buff);
-        printf("Error: %s\n",buff);
+        receive_msg(src,report->err_msg);
+        //log here WIF
+        report->status = ERROR;
+        report->pulled = -1;
+        report->pushed = -1;
         return -1;
     }
     
-    return transfer_file(src,dst,path,file_size);
+    return transfer_file(src,dst,path,file_size,&report);
 
 }
 
@@ -429,17 +453,29 @@ void* execute_job(void* arg) {
     int src,dst;
     Job job;
     JobQueue jq = (JobQueue) arg;
+    Report report;
+
     while(1) {
+        if(jq_is_shutdown(jq)) return;
+
         jq_dequeue(jq,&job); // blocking till job available, thread safe
+
+        if(!job.valid) {
+            continue;
+        }
 
         connect_peer(&job.src,&src);
         connect_peer(&job.dst,&dst);
         
-        pull_push(src,dst,&job.fn);
+        pull_push(src,dst,&job.fn,&report);
+        log_job(job,report,report.err_msg,pthread_self());
+
+        close(src);
+        close(dst);
     }
 }
 
-//free return array
+// WIF free return array
 int spawn_workers(pthread_t* pool,int n,JobQueue jq) {
 
     for(int i = 0; i < n; i++) {
@@ -525,15 +561,6 @@ int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQ
         
         entry = create_sync_entry(src,dst,time(NULL),ACTIVE);    
         issue_jobs(&entry.src,&entry.dst,jobs);
-
-        // Log entries
-        //generate_msg(msg_buff,ADDED_DIR_STR,src,dst,-1,MAX_MSG_SIZE);
-        //log_and_print(msg_buff,strlen(msg_buff) + 1);
-           
-        //generate_msg(msg_buff,MON_STARTED_STR,src,dst,-1,MAX_MSG_SIZE);
-        //log_and_print(msg_buff,strlen(msg_buff) + 1);
-
-        // Catalogue the monitoring in sm_info and enque corresponding sync job
         sm_add_entry(sm_info,entry);
     }
     fclose(config_file);
@@ -552,7 +579,7 @@ int main(int argc, char **argv) {
 
     size_t buff_sz;
     int port,listener_sock,console_sock;
-    int max_n,flag;
+    int max_n,connected_flag;
     char cmd_buff[PACKET_SIZE];
 
     char *logfile = NULL,*cfgfile =NULL;
@@ -586,15 +613,19 @@ int main(int argc, char **argv) {
             }
         }
 
-        flag = 0;
-        while(flag == 0) {
-            flag = process_command(console_sock,watch_dirs,jobs)
+        connected_flag = 0;
+        while(!connected_flag) {
+            connected_flag = process_command(console_sock,buff_sz,watch_dirs,jobs,worker_pool);
+        }
 
+        if(connected_flag == 1) {
+            break;
         }
 
     }
 
     //Free resources
+    free(worker_pool);
     sm_del(watch_dirs);
     jq_del(jobs);
     fclose(LOG);

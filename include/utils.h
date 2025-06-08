@@ -47,4 +47,10 @@ int compare_uris(resource_id *uri_1,resource_id *uri_2);
     Returns -1 on error.*/
 int connect_peer(resource_id *uri,int *sock);
 
+/* Converts resource_id  ```id``` to a string stored in ```str```.
+   If ```fn``` is passed as NULL ignore appending filename.
+    Returns -1 on error.*/
+int uri_string(resource_id *id,char* fn,char* str);
+
+
 #endif

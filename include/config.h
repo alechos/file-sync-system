@@ -19,5 +19,7 @@
 #define FSS_IN "tmp/fss_in"
 #define FSS_OUT "tmp/fss_out"
 #define MSG_END "--END_OF_MSG--"
+#define MSG_ERR "--MSG_ERR--"
+
 
 #endif

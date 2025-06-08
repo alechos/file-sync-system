@@ -5,14 +5,11 @@
 typedef enum exec_stat{
     SUCCESS,
     ERROR,
-    PARTIAL,
 } EXEC_STATUS;
 
 typedef struct exec_report {
     EXEC_STATUS status;
-    int copied;
-    int skipped;
-    int deleted;
-    int errors;
-    size_t err_len;
+    ssize_t pulled;
+    ssize_t pushed;
+    char err_msg[PACKET_SIZE];
 } Report;

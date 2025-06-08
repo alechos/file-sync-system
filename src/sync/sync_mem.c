@@ -3,83 +3,25 @@
 # include <stdlib.h>
 #include <string.h>
 
+typedef struct node_tag{
+    SyncEntry entry;
+    struct node_tag* next;
+} node;
+
 typedef struct sync_info_mem_store {
- SyncEntry* array;
+ node* head;
+ node* tail;
+
  size_t entries;
- size_t max_sz;   
+
 }sync_info_mem_store;
 
-/*
- * djb2 Hash function
- * Original author: Daniel J. Bernstein (http://www.cse.yorku.ca/~oz/hash.html)
- * This function is widely used and is known for its simplicity and speed.
- *
- * License: Public domain (original code by Daniel J. Bernstein)
- */
-unsigned long hash(unsigned char *str) {
-    unsigned long hash = 5381;
-    int c;
-
-    while ((c = *str++))
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-
-    return hash;
-}
-
-void set_to_default(sync_info_mem_store* sm) {
-    SyncEntry def = default_entry();
-    for(int i=0;i < sm->max_sz ;i++) {
-        sm->array[i] = def;
-    }
-}
-
-
-unsigned long linear_probe(SyncEntry* entries,char* key,size_t sz) {
-    unsigned long index;
-    char* entry_key; 
-
-    index = hash((unsigned char*) key)%(sz);
-
-    for(int i=0;i<sz;i++) {
-        entry_key = entries[index].src.;
-        if((!entries[index].valid)||(strcmp(key,entry_key)==0)) {
-            break;
-        }
-        index = (index+1)%sz;
-    }
-
-    return index;
-
-}
-
-void re_hash(sync_info_mem_store* sm) {
-    unsigned long index;
-    size_t new_sz = sm->max_sz*2;
-    SyncEntry* array = malloc(new_sz*sizeof(SyncEntry));
-    SyncEntry def = default_entry();
-
-    for(int i=0;i < new_sz ;i++) {
-        array[i] = def;
-    }
-    
-    for(int i=0;i < sm->max_sz ;i++) {
-        if((sm->array[i].valid)) {
-            index = linear_probe(array,sm->array[i].sd,new_sz);
-            array[index] = sm->array[i];
-        }
-    }
-
-    free(sm->array);
-    sm->array = array;
-    sm->max_sz = new_sz;
-}
-
-void sm_iterate(SyncMem sm,void(*callback)(SyncEntry,char*)) {
-    for(int i = 0; i < sm->max_sz; i++) {
-        if(sm->array[i].valid) {
-            callback(sm->array[i],sm->array[i].sd);
-        }
-    }
+node* new_node(SyncEntry new_entry,node* next) {
+    node* new = malloc(sizeof(node));
+    if (new == NULL) return NULL;
+    new->entry = new_entry;
+    new->next = next;
+    return new;
 }
 
 
@@ -90,73 +32,63 @@ int sm_is_empty(sync_info_mem_store* sm) {
 sync_info_mem_store* sm_create() {
     sync_info_mem_store* sm;
     sm = malloc(sizeof(sync_info_mem_store));
+    sm->head = NULL;
+    sm->tail = NULL;
     sm->entries = 0;
-    sm->max_sz = DEFAULT_HT_SIZE;
-    sm->array = malloc((DEFAULT_HT_SIZE*sizeof(SyncEntry)));
-    set_to_default(sm);
     return sm;
 }
 
 int sm_add_entry(sync_info_mem_store* sm,SyncEntry entry) {
-    unsigned long index;
-
-    if(sm->max_sz == sm->entries) {
-        re_hash(sm);
-    }
+    node* new = new_node(entry,NULL);
     
-    index = linear_probe(sm->array,entry.sd,sm->max_sz);
-    sm->array[index] = entry;
+    if (new == NULL) return -1;
+    new->entry.valid = 1;
+    if(sm->entries != 0) {
+        sm->tail->next = new;
+        sm->tail = new;
+    } else {
+        sm->head = new;
+        sm->tail = sm->head;
+    }
     sm->entries++;
+
     return 0;
 }
 
 int sm_del(sync_info_mem_store* sm) {
-    free(sm->array);
+    node* head;
+    node* temp;
+
+    if(sm->entries == 0) return -1;
+    head = sm->head;
+
+    while(head) {
+        temp = head->next;
+        free(head);
+        head = temp;
+    }
+       
     free(sm);
     return 0;
 }
 
-int get_index(sync_info_mem_store* sm,char* key,unsigned long* out) {
-    unsigned long index = hash((char unsigned*) key)%(sm->max_sz);
-    for(int i=0;i<(sm->max_sz);i++) {
-        index = index%(sm->max_sz);
-        if(sm->array[index].valid &&!strcmp(sm->array[index].sd,key)) { 
-            *out = index;
+
+int sm_get_entry(sync_info_mem_store *sm,SyncEntry *out,resource_id *id) {
+    node* curr;
+    SyncEntry curr_entry;
+
+    curr = sm->head;
+    while(curr!=NULL) {
+        curr_entry = curr->entry;
+        if(compare_uris(&curr_entry.src,id)) {
+            *out = curr_entry;
             return 0;
         }
-        index++;
-    }
-    return -1;
-}
-
-int sm_get_entry(sync_info_mem_store *sm,SyncEntry *out,char *key) {
-    unsigned long index;
-    if(!get_index(sm,key,&index)) {
-        *out = sm->array[index];
-        return 0;
+        curr = curr->next;
     }
     *out = default_entry();
     return -1;
 }
 
-int sm_remove_entry(sync_info_mem_store* sm,char* key) {
-    unsigned long index;
-    if(!get_index(sm,key,&index)) {
-        sm->array[index] = default_entry();
-        return 0;
-    }
-    return -1;
-}
-
-int sm_search_wd(SyncMem sm,int wd,SyncEntry* out) {
-    for(int i = 0; i < sm->max_sz; i++) {
-        if((sm->array[i].valid) && (sm->array[i].wd == wd)) {
-            *out = sm->array[i];
-            return 0;
-        }
-    }   
-
-    return -1;
-}
 
 

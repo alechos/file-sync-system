@@ -14,6 +14,7 @@ typedef struct node_tag{
 typedef struct job_queue{
     node* front;
     node* rear;
+    int shutdown_flag;
     size_t size;
     size_t max_size;
 
@@ -32,6 +33,7 @@ node* new_node(Job new_job,node* next) {
 job_queue *jq_create(size_t max_size) {
 
     job_queue *new_queue = malloc(sizeof(struct job_queue));
+    new_queue->shutdown_flag = 0;
     new_queue->front = NULL;
     new_queue->rear = NULL;
     new_queue->size = 0;
@@ -44,7 +46,7 @@ job_queue *jq_create(size_t max_size) {
 
 }
 
-int jq_in_queue(job_queue *q,char *dir) {
+int jq_in_queue(job_queue *q,Job* job) {
     node* curr;
     Job curr_job;
 
@@ -53,7 +55,8 @@ int jq_in_queue(job_queue *q,char *dir) {
     curr = q->front;
     while(curr!=NULL) {
         curr_job = curr->node_job;
-        if(!strcmp(curr_job.sd,dir)) {
+//      WIF : make sure job fields are thread safe
+        if(compare_uris(&curr_job.src,&job->src) && !strcmp(curr_job.fn,job->fn)) {
             pthread_mutex_unlock(&q->mutex);
             return 1;
         }
@@ -125,7 +128,7 @@ int jq_enqueue(job_queue* q,Job job) {
         q->rear = q->front;
     }
     q->size++;
-
+    new->node_job.valid = 1;
     pthread_cond_broadcast(&q->not_empty);
     pthread_mutex_unlock(&q->mutex);
 
@@ -150,4 +153,44 @@ int jq_dequeue(job_queue* q,Job* out) {
     pthread_mutex_unlock(&q->mutex);
 
     return 0;
+}
+
+int jq_cancel(job_queue* q,char* dir) {
+    node* curr;
+    Job curr_job;
+
+    pthread_mutex_lock(&q->mutex);
+
+    curr = q->front;
+    while(curr!=NULL) {
+        curr_job = curr->node_job;
+        if(!strcmp(curr_job.src.dir,dir)) {
+            curr->node_job.valid = 0;
+        }
+        curr = curr->next;
+    }
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+
+}
+
+int jq_shutdown(job_queue* q) {
+    pthread_mutex_lock(&q->mutex);
+    //drains queue, rechecking everytime a job is removed
+    while(q->size>0) {
+        pthread_cond_wait(&q->not_full,&q->mutex);
+    }
+    q->shutdown_flag = 1;
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
+
+int jq_is_shutdown(job_queue* q) {
+    int ret;
+
+    pthread_mutex_lock(&q->mutex);
+    ret = q->shutdown_flag;
+    pthread_mutex_unlock(&q->mutex);
+    
+    return ret;
 }
