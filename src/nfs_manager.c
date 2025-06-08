@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "command.h"
-#include "fss_manager_stings.h"
+#include "nfs_manager_stings.h"
 #include "config.h"
 #include "job.h"
 #include "queue.h"
@@ -444,15 +444,8 @@ int transfer_file(int src,int dst,Job *job,ssize_t file_size,Report *report) {
 
         snprintf(header,PACKET_SIZE,PUSH_OP_STR,dst_path,total_r);
         send_msg(header,strlen(header) + 1,dst);
-
-        if(!strcmp(buffer,MSG_ERR)) { //error pushing!
-            report->pushed = -1;
-            report->status = ERROR;
-            receive_msg(dst,report->err_msg); //receive error message
-            return -1;
-        }
-
         send_msg(buffer,total_r,dst);
+
         file_size-=total_r;
 
         report->pushed+=total_r;
@@ -514,7 +507,6 @@ void* execute_job(void* arg) {
         }
 
         if(!job.valid) continue;
-        
 
         if(connect_peer(&job.src,&src) == -1 || connect_peer(&job.dst,&dst) == -1 ) {
             log_job(job,report,"Peer unreachable.",pthread_self());

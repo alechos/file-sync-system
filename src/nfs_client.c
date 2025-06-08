@@ -7,7 +7,7 @@
 #include <string.h>
 #include "config.h"
 #include "utils.h"
-#include "client.h"
+#include "nfs_client.h"
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -177,7 +177,7 @@ int receive_file(int file,int sock,size_t initial_size) {
 
 int push(header_info *header,int sock) {
     int fd;
-    char msg[PACKET_SIZE], err_buff[PACKET_SIZE];
+    char msg[PACKET_SIZE];
 
     if(header->chunk_size == -1) { //when would this happen?? WIF
         fd = open(header->path,O_WRONLY | O_CREAT | O_TRUNC,0644);
@@ -189,9 +189,6 @@ int push(header_info *header,int sock) {
     }
 
     if(fd == -1) {
-        get_error(errno,err_buff);
-        send_msg(MSG_ERR,strlen(MSG_ERR),sock);
-        send_msg(err_buff,strlen(err_buff) + 1,sock);
         close(sock);
         return -1;
     }    
