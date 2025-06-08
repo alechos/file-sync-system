@@ -94,6 +94,7 @@ int pull(char *path, int sock) {
     size_t offset;
 
     if (stat(path,&st) != 0) {
+
         offset = snprintf(buff,PACKET_SIZE,"-1");    
         send_msg(buff,offset+1,sock);
 
@@ -113,7 +114,7 @@ int pull(char *path, int sock) {
         return -1;
     }
 
-    offset = snprintf(buff,PACKET_SIZE,"%ld ",st.st_size);
+    offset = snprintf(buff,PACKET_SIZE,"%ld",st.st_size);
     buff[offset++] = ' ';
 
     send_msg(buff,offset + 1,sock); //send file size
@@ -129,7 +130,7 @@ int pull(char *path, int sock) {
 int list(char *path,int sock) {
     DIR *dir;
     struct dirent *entry;
-    char files[PACKET_SIZE];
+    char files[PACKET_SIZE] = {0};
     int offset = 0;
 
     dir = opendir(path);
@@ -144,7 +145,10 @@ int list(char *path,int sock) {
         offset += snprintf(files + offset, PACKET_SIZE - offset, "%s\n", entry->d_name);
     }
     files[offset] = '.';
-    send_msg(files,strlen(files) + 1,sock);
+
+    if(send_msg(files,strlen(files) + 1,sock) == -1) {
+        return -1;
+    }
 
     closedir(dir);
     return 0;
@@ -175,7 +179,6 @@ int push(header_info *header,int sock) {
     int fd;
     char msg[PACKET_SIZE], err_buff[PACKET_SIZE];
 
-    //WIF: open error?
     if(header->chunk_size == -1) { //when would this happen?? WIF
         fd = open(header->path,O_WRONLY | O_CREAT | O_TRUNC,0644);
         receive_msg(sock,msg);  //read actual header
@@ -191,9 +194,7 @@ int push(header_info *header,int sock) {
         send_msg(err_buff,strlen(err_buff) + 1,sock);
         close(sock);
         return -1;
-    }
-    // WIF: receive_msg gets less than chunk_sz
-    
+    }    
     receive_file(fd,sock,header->chunk_size);
     close(fd);
     return 0;
@@ -240,13 +241,14 @@ int handle_coms(int com_sock) {
     When a new connection is accepted, handle operation.*/
 void* handle_peer(void *arg) {
 
-    struct sockaddr_in peer; //maybe i have to change this WIF
+    struct sockaddr_in peer;
     socklen_t addrlen;
     int com_sock;
     int listen_sock = *((int*) arg);
     addrlen = sizeof(peer);
 
     while(1) {
+
         com_sock = accept(listen_sock,(struct sockaddr*) &peer,&addrlen);
         if(com_sock < 0) {
             if (errno == EBADF || errno == EINVAL) {
@@ -257,7 +259,7 @@ void* handle_peer(void *arg) {
         handle_coms(com_sock);
         close(com_sock);
     }
-    return NULL; // WIF
+    return NULL;
 }
 
 int main(int argc, char** argv) {
@@ -281,7 +283,9 @@ int main(int argc, char** argv) {
     printf("Running, enter any character to shut down.\n");
     getchar();
     
-    close(listen_sock);
+    shutdown(listen_sock, SHUT_RDWR);
+    printf("Shutting down\n");
+
     for(int i = 0; i < MAX_WORKERS;i++) {
         pthread_join(workers[i],NULL);
     }

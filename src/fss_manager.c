@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include "command.h"
 #include "fss_manager_stings.h"
-#include "worker.h"
-#include "worker_list.h"
 #include "config.h"
 #include "job.h"
 #include "queue.h"
@@ -54,17 +52,16 @@ int parse_args(char **logfile,char **cfgfile,int *max_n,int *port,size_t *buff_s
             *max_n = strtol(optarg,NULL,10);
             break;
         case 'p': //parse port
-            *port = optarg;
+            *port = strtol(optarg,NULL,10);
             break;
         case 'b': //parse job queue slot count
-            *buff_sz = optarg;
+            *buff_sz = strtol(optarg,NULL,10);;
             break;
         default:  //invalid format
             return -1;
         }
     }
 
-    //WIF wrong fromat?? maybe fix up there? ^^^
     if(!(*logfile) || !(*cfgfile)) {
         fprintf(stderr,
             "Usage:\n"
@@ -101,15 +98,17 @@ int get_file_path(char *dir,char *filename,char *full_path) {
    and a (potentially empty) error buffer.*/
 int extract_details(Job job,Report report,char *err_msg,char *pulled,char* pushed) {
 
+
     //Extract pull op details
-    if(report.pulled < 0) { //pull error occured
+
+    if(report.pulled <= 0) { //pull error occured
         snprintf(pulled,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
     } else {
         snprintf(pulled,MAX_MSG_SIZE,"%zd bytes pulled",report.pulled);
     }
 
     //Extract push op details
-    if(report.pushed < 0) { //push error occured
+    if(report.pushed <= 0) { //push error occured
         snprintf(pushed,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
     } else {
         snprintf(pushed,MAX_MSG_SIZE,"%zd bytes pushed",report.pulled);
@@ -143,8 +142,11 @@ int log_job(Job job,Report report,char *err_msg,pthread_t thread_id) {
     uri_string(&job.dst,job.fn,dst_uri);
 
     //Log entry
-    fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,thread_id,"PULL",result,pulled);
-    fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,thread_id,"PUSH",result,pushed);
+    fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,(unsigned long) thread_id,"PULL",result,pulled);
+
+    if(report.pushed >0) {
+        fprintf(LOG,LOG_ENTRY_STR,tmstmp,src_uri,dst_uri,(unsigned long) thread_id,"PUSH",result,pushed);
+    }
 
     fflush(LOG);
     return 0;
@@ -212,6 +214,10 @@ Returns -1 if command is INVALID_COM.*/
 int parse_command(char *line,Command *command) {
     char *arg;
     arg = strtok(line," ");
+
+    if(!arg) {
+        return -1;
+    }
     command->com = arg_to_comm(arg);
     
     // Return in case of invalid command
@@ -235,6 +241,39 @@ int parse_command(char *line,Command *command) {
 
 }
 
+// buff must be at least of size PACKET_SIZE
+int get_list(char *buff,char *path,int sock) {
+    char msg[PACKET_SIZE];
+    snprintf(msg,PACKET_SIZE - 1,LIST_OP_STR,path);
+    if(send_msg(msg,strlen(msg) + 1,sock) != - 1) {
+        if(receive_msg(sock,buff) <= 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    return -1;
+}
+
+ssize_t get_buff_line(char* line, char** buff) {
+    char *ptr;
+    size_t offset;
+
+    ptr = strchr(*buff,'\n');
+    if (ptr == NULL) {
+        return -1;
+    }
+
+    *ptr = '\0';
+    offset = ptr - *buff;
+    memcpy(line,*buff,offset);
+    line[offset] = '\0';
+
+    *buff = ++ptr;
+
+    return offset;
+}
+
 /*  Handler for add command by console. Begins syncing of a new direcotry 
     by filling the jobs queue with the directory's contents. 
     Returns -1 on failure.*/
@@ -244,8 +283,10 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
     Job sync_job;
     resource_id src_uri,dst_uri;
     int peer_sock,entry_exists;
-    char list_buff[PACKET_SIZE], file_path[MAX_PATH_SIZE];
+    char list_buff[PACKET_SIZE], file_path[MAX_FILENAME_SIZE];
+    char full_src_path[MAX_PATH_SIZE],full_dist_path[MAX_PATH_SIZE];
     char msg_buff[MAX_MSG_SIZE] = {0};
+    char *buff_ptr;
 
     if(parse_uri(com.source,&src_uri) == -1) return -1;
     if(parse_uri(com.destination,&dst_uri) == -1) return -1;
@@ -264,28 +305,30 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
     // add sync entry
     entry = create_sync_entry(com.source,com.destination,time(NULL),ACTIVE);
     sm_add_entry(sm_info,entry);
-    //WIF msg_buff must be smaller than PACKET_SIZE
 
     //get dir list from courcce peer
     get_list(list_buff,src_uri.dir,peer_sock);
 
+    buff_ptr = list_buff;
     //read filenames from list line by line. get_buff_line consumes the buffer!
-    while(get_buff_line(file_path,&list_buff) != -1) {
+    while(get_buff_line(file_path,&buff_ptr) != -1) {
 
         //create a sync_job for read file name from source
         sync_job = create_job(&src_uri,&dst_uri,file_path);  
+        snprintf(full_src_path,MAX_PATH_SIZE,"%s/%s",com.source,file_path);
 
         //if file already in queue notify and skip
         if(jq_in_queue(jobs,&sync_job)) {
-            snprintf(file_path,MAX_PATH_SIZE,"%s/%s",src_uri.dir,file_path);
-            generate_msg(msg_buff,IN_QUEUE_STR,file_path,NULL,MAX_MSG_SIZE);
+            generate_msg(msg_buff,IN_QUEUE_STR,full_src_path,NULL,MAX_MSG_SIZE);
             print_and_send(out,msg_buff,strlen(msg_buff)+1);  
             continue;      
         }
 
         //add job in queue and notify
         jq_enqueue(jobs,sync_job);
-        generate_msg(msg_buff,ADDED_DIR_STR,com.source,com.destination,MAX_MSG_SIZE);
+        
+        snprintf(full_dist_path,MAX_PATH_SIZE,"%s/%s",com.destination,file_path);
+        generate_msg(msg_buff,ADDED_DIR_STR,full_src_path,full_dist_path,MAX_MSG_SIZE);
         broadcast(out,msg_buff,strlen(msg_buff) + 1);
     }
 
@@ -295,18 +338,17 @@ int console_add(int out,Command com,JobQueue jobs, SyncMem sm_info) {
 }
 
 /* Handler for cancel command from the console.
-Returns -1 on error.Cancels synchornization of files in queue.*/
+Cancels synchornization of files in queue.*/
 int console_cancel(int out,Command com, SyncMem sm_info,JobQueue jobs) {
-    SyncEntry entry;
     char buff[MAX_MSG_SIZE] = {0};
 
     //cancel jobs matching source dir
     if(jq_cancel(jobs,com.source) == -1) {
-        //notify in case the dir doesnt exist
+        //notify in case dir doesnt exist
         generate_msg(buff,NOT_MON_STR,com.source,NULL,MAX_MSG_SIZE);
         print_and_send(out,buff,strlen(buff) + 1);
         send_msg(MSG_END,strlen(MSG_END) + 1,out);    
-        return -1;
+        return 0;
     }
     //notify successfull cancelation
     generate_msg(buff,CANCEL_MON_STR,com.source,NULL,MAX_MSG_SIZE);
@@ -321,8 +363,6 @@ int console_cancel(int out,Command com, SyncMem sm_info,JobQueue jobs) {
 for all jobs to finish before exiting smoothly.*/
 int console_shutdown(int out,SyncMem sm,JobQueue jobs,pthread_t *pool,size_t thread_slots) {
     char buff[MAX_MSG_SIZE] = {0};
-    int sig;
-    sigset_t mask;
 
     generate_msg(buff,MAN_SHUTDOWN_STR,NULL,NULL,MAX_MSG_SIZE);
     print_and_send(out,buff,strlen(buff) + 1);
@@ -361,6 +401,8 @@ int process_command(int sock,size_t slots,SyncMem sm,JobQueue jobs,pthread_t *po
     if ((size = receive_msg(sock,buff)) > 0) {
         buff[size] = 0;
         parse_command(buff,&command);
+    } else { 
+        return -1;
     }
 
     switch (command.com) {
@@ -371,21 +413,24 @@ int process_command(int sock,size_t slots,SyncMem sm,JobQueue jobs,pthread_t *po
     case SHUTDOWN:
         // If shutdown succesfully return 1, signify shutdown
         if(!console_shutdown(sock,sm,jobs,pool,slots)) return 1;
+        break;
     default:
         send_msg("Invalid Command\n",17 + 1,sock);
         send_msg(MSG_END,strlen(MSG_END) + 1,sock);
-        break;
+        return 0;
     }
 
     return -1;
 }
 
-int transfer_file(int src,int dst,char *path,ssize_t file_size,Report *report) {
+int transfer_file(int src,int dst,Job *job,ssize_t file_size,Report *report) {
     char buffer[PACKET_SIZE];
     char header[PACKET_SIZE];
+    char dst_path[PACKET_SIZE];
 
     ssize_t total_r = 0;
     report->status = ERROR;
+    snprintf(dst_path,PACKET_SIZE,"%s/%s",job->dst.dir,job->fn);
 
     while(file_size > 0 && (total_r = receive_msg(src,buffer)) > 0 ){
         if(!strcmp(buffer,MSG_ERR)) { //error pulling!
@@ -397,13 +442,13 @@ int transfer_file(int src,int dst,char *path,ssize_t file_size,Report *report) {
         }
         report->pulled+=total_r;
 
-        snprintf(header,PACKET_SIZE,PUSH_OP_STR,path,total_r);
+        snprintf(header,PACKET_SIZE,PUSH_OP_STR,dst_path,total_r);
         send_msg(header,strlen(header) + 1,dst);
 
         if(!strcmp(buffer,MSG_ERR)) { //error pushing!
             report->pushed = -1;
             report->status = ERROR;
-            receive_msg(src,report->err_msg); //receive error message
+            receive_msg(dst,report->err_msg); //receive error message
             return -1;
         }
 
@@ -416,7 +461,7 @@ int transfer_file(int src,int dst,char *path,ssize_t file_size,Report *report) {
     //signal file transmission over
     if(file_size <= 0) {
         report->status = SUCCESS;
-        snprintf(header,PACKET_SIZE,PUSH_OP_STR,path,0);
+        snprintf(header,PACKET_SIZE,PUSH_OP_STR,dst_path,0);
         send_msg(header,strlen(header) + 1,dst);
         return 0;
     }
@@ -424,50 +469,59 @@ int transfer_file(int src,int dst,char *path,ssize_t file_size,Report *report) {
     return -1;
 }
 
-int pull_push(int src,int dst,char *path,Report *report) {
+int pull_push(int src,int dst,Job *job,Report *report) {
     char buff[PACKET_SIZE];
+    char full_path[MAX_PATH_SIZE];
     ssize_t file_size;
     char *end_ptr;
 
     //issue a pull
-    snprintf(buff,PACKET_SIZE,PULL_OP_STR,path);
-    send_msg(buff,strlen(buff) +1,src);
+    snprintf(full_path,MAX_PATH_SIZE,"%s/%s",job->src.dir,job->fn);
+    snprintf(buff,PACKET_SIZE,PULL_OP_STR,full_path);
 
+    if(send_msg(buff,strlen(buff) +1,src) == -1) return -1;
     receive_msg(src,buff);
-    file_size = strtol(buff,&end_ptr,10);
 
+    file_size = strtol(buff,&end_ptr,10);
     if(file_size == -1) {
         receive_msg(src,report->err_msg);
-        //log here WIF
         report->status = ERROR;
         report->pulled = -1;
         report->pushed = -1;
         return -1;
     }
     
-    return transfer_file(src,dst,path,file_size,&report);
+    return transfer_file(src,dst,job,file_size,report);
 
 }
 
+// Thread handler for continuous sync job service.
 void* execute_job(void* arg) {
     int src,dst;
+    char full_path[MAX_PATH_SIZE];
     Job job;
     JobQueue jq = (JobQueue) arg;
     Report report;
+    report.pulled = 0;
+    report.pushed = 0;
 
     while(1) {
-        if(jq_is_shutdown(jq)) return;
 
-        jq_dequeue(jq,&job); // blocking till job available, thread safe
+        if(jq_is_shutdown(jq)) return NULL;
 
-        if(!job.valid) {
-            continue;
+        if(jq_dequeue(jq,&job) == -1) { // blocking till job available, thread safe
+            return NULL;
         }
 
-        connect_peer(&job.src,&src);
-        connect_peer(&job.dst,&dst);
+        if(!job.valid) continue;
         
-        pull_push(src,dst,&job.fn,&report);
+
+        if(connect_peer(&job.src,&src) == -1 || connect_peer(&job.dst,&dst) == -1 ) {
+            log_job(job,report,"Peer unreachable.",pthread_self());
+            return NULL;
+        } 
+
+        pull_push(src,dst,&job,&report);
         log_job(job,report,report.err_msg,pthread_self());
 
         close(src);
@@ -475,45 +529,16 @@ void* execute_job(void* arg) {
     }
 }
 
-// WIF free return array
+// Spawns threads in thread_pool
 int spawn_workers(pthread_t* pool,int n,JobQueue jq) {
 
     for(int i = 0; i < n; i++) {
-        pthread_create(&pool[i],NULL,execute_job,(void*) jq); // WIF pthread_create fails
+        if(pthread_create(&pool[i],NULL,execute_job,(void*) jq) != 0) {
+            return -1;
+        }
     }
 
     return 0;
-}
-
-// buff must be at least of size PACKET_SIZE
-int get_list(char *buff,char *path,int sock) {
-    char msg[PACKET_SIZE];
-    snprintf(msg,PACKET_SIZE - 1,LIST_OP_STR,path);
-    if(send_msg(msg,strlen(msg) + 1,sock) != - 1) {
-        if(receive_msg(sock,buff) <= 0) {
-            return -1;
-        }
-        return 0;
-    }
-
-    return -1;
-}
-
-ssize_t get_buff_line(char* line, char** buff) {
-    char *ptr;
-    size_t offset;
-
-    ptr = strchr(*buff,'\n');
-    if (ptr == NULL) {
-        return -1;
-    }
-
-    *ptr = '\0';
-    offset = ptr - *buff;
-    memcpy(line,*buff,offset);
-    *buff = ++ptr;
-
-    return offset;
 }
 
 int issue_jobs(resource_id *src,resource_id *dst,JobQueue jobs) {
@@ -521,11 +546,13 @@ int issue_jobs(resource_id *src,resource_id *dst,JobQueue jobs) {
     int sock;
     char file[MAX_FILENAME_SIZE];
     char list[PACKET_SIZE];
+    char *buff_ptr;
 
-    if (connect_peer(src,sock) == -1) return -1;
+    if (connect_peer(src,&sock) == -1) return -1;
     if (get_list(list,src->dir,sock) == -1) return -1;
 
-    while(get_buff_line(file,&list) != -1) {
+    buff_ptr = list;
+    while(get_buff_line(file,&buff_ptr) != -1) {
         job = create_job(src,dst,file);    
         jq_enqueue(jobs,job);
     }
@@ -539,9 +566,7 @@ int issue_jobs(resource_id *src,resource_id *dst,JobQueue jobs) {
 int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQueue jobs) {
     FILE* config_file;
     SyncEntry entry;
-    Job sync_job;
-    int wd;
-    char buff[MAX_URI_LEN*2 + 1],msg_buff[MAX_MSG_SIZE];
+    char buff[MAX_URI_LEN*2 + 1];
     char src[MAX_URI_LEN],dst[MAX_URI_LEN];
 
     config_file = fopen(conf_file_path,"r");   
@@ -560,7 +585,8 @@ int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQ
         snprintf(dst,MAX_URI_LEN,"%s",strtok(NULL," "));
         
         entry = create_sync_entry(src,dst,time(NULL),ACTIVE);    
-        issue_jobs(&entry.src,&entry.dst,jobs);
+
+        if(issue_jobs(&entry.src,&entry.dst,jobs)) return -1;
         sm_add_entry(sm_info,entry);
     }
     fclose(config_file);
@@ -574,13 +600,10 @@ int main(int argc, char **argv) {
     pthread_t *worker_pool;
     SyncMem watch_dirs;
     JobQueue jobs;
-    Job new_job;
-    Command command;
 
     size_t buff_sz;
     int port,listener_sock,console_sock;
     int max_n,connected_flag;
-    char cmd_buff[PACKET_SIZE];
 
     char *logfile = NULL,*cfgfile =NULL;
     max_n = 5;
@@ -596,9 +619,9 @@ int main(int argc, char **argv) {
     worker_pool = malloc(max_n*sizeof(pthread_t));
 
     // Initialize system by loading config entries and preparing jobs
-    init_manager(cfgfile,logfile,watch_dirs,jobs);
-    worker_pool = spawn_workers(worker_pool,max_n,jobs); // WIF maybe do it after init_manager
+    spawn_workers(worker_pool,max_n,jobs); 
 
+    init_manager(cfgfile,logfile,watch_dirs,jobs);
     listener_sock = get_listener(port);
     addrlen = sizeof(manager_addr);
 
@@ -606,7 +629,6 @@ int main(int argc, char **argv) {
         console_sock = accept(listener_sock,(struct sockaddr*) &manager_addr,&addrlen);
         if(console_sock < 0) {
             if (errno == EBADF || errno == EINVAL) {
-                printf("Failure establishing accepting socket\n");
                 break;
             } else {
                 continue;

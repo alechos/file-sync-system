@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <arpa/inet.h>
+#include <string.h>
 #include "utils.h"
 #include "config.h"
 #include <sys/types.h>
@@ -58,7 +59,6 @@ ssize_t write_buff(char* buff,size_t req_size,int fd) {
     return total_w;
 }
 
-//WIF: biff is smaller than message? maybe set a cap from a passsed parameter
 ssize_t receive_msg(int sock_in,char* buff) {
     uint32_t net_size; 
     size_t msg_size;
@@ -71,10 +71,14 @@ ssize_t receive_msg(int sock_in,char* buff) {
     return bytes_read;
 }
 
-//WIF regarding the WIF at receive_msg... maybe prohibit sending above packet_size or at least notify of trunct
+
 ssize_t send_msg(char *msg,size_t size,int sock_out) {
     uint32_t net_size = htonl(size);
     ssize_t total_w;
+
+    if(size > PACKET_SIZE) {
+        return -1;
+    }
 
     if(write_buff((char*)&net_size,sizeof(uint32_t),sock_out) == -1) return -1;
     if((total_w = write_buff(msg,size,sock_out)) == -1) return -1;
@@ -83,7 +87,7 @@ ssize_t send_msg(char *msg,size_t size,int sock_out) {
 }
 
 int uri_string(resource_id *id,char* fn,char* str) {
-    
+
     if(fn == NULL) {
         snprintf(str,MAX_URI_LEN,"%s@%s:%s",id->dir,id->host,id->port);
     } else {
@@ -104,7 +108,7 @@ int parse_uri(char* in, resource_id *uri) {
     if (end == NULL || start == NULL) return -1;
 
     *end = '\0';
-    snprintf(uri->dir, MAX_PATH_SIZE, "%s", start);
+    snprintf(uri->dir, MAX_PATH_SIZE, "%s", start+1); // +1 for skipping "/" at start of dir since path is relative
     start = end + 1;
     end = strchr(start, ':');
     if (end == NULL || start == NULL) return -1;
@@ -135,19 +139,17 @@ int get_listener(short port) {
     }
 
     host.sin_family = AF_INET;
-    host.sin_addr.s_addr = htonl(INADDR_ANY); //WIF
+    host.sin_addr.s_addr = htonl(INADDR_ANY);
     host.sin_port = htons(port);
 
     option = 1;
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &option, sizeof(option));
 
     if(bind(listen_sock,(struct sockaddr*) &host,sizeof(host)) == -1) {
-        perror("bind");
         return -1;
     }
 
     if(listen(listen_sock,MAX_BACKLOG) == -1) {
-        perror("listen");
         return -1;
     }
 
@@ -155,19 +157,21 @@ int get_listener(short port) {
 }
 
 int connect_peer(resource_id *uri,int *sock) {
-    struct addrinfo *info = NULL; //WIF does this need freeing???
+    struct addrinfo *info = NULL; 
     struct addrinfo hint;
 
     memset(&hint,0,sizeof(hint));
     hint.ai_family = AF_INET;
     hint.ai_socktype = SOCK_STREAM;
 
-    sock = socket(AF_INET,SOCK_STREAM,0);
+    *sock = socket(AF_INET,SOCK_STREAM,0);
     getaddrinfo(uri->host,uri->port,&hint,&info);
 
-    if(connect(sock,(struct sockaddr*) info->ai_addr,info->ai_addrlen) == -1) {
+    if(connect(*sock,(struct sockaddr*) info->ai_addr,info->ai_addrlen) == -1) {
+        freeaddrinfo(info);
         return -1;        
     }
 
+    freeaddrinfo(info);
     return 0;
 }

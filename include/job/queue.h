@@ -26,7 +26,7 @@ int jq_del(JobQueue jobs);
 int jq_enqueue(JobQueue jobs,Job job);
 
 /* Dequeues ```job``` from JobQueue.
-    Returns 0 on success.*/
+    Returns 0 on success, -1 if queue shutdown.*/
 int jq_dequeue(JobQueue jobs,Job* job);
 
 /* Cancels any job synchronizing ```dir``` from any host.
@@ -36,6 +36,10 @@ int jq_cancel(JobQueue jobs,char* dir);
 /* Initiates shutdown of job processing.
     Returns 0 on success.*/
 int jq_shutdown(JobQueue jobs);
+
+/* Checks if queue has been shutdown.
+    Returns 1 if true, 0 if false.*/
+int jq_is_shutdown(JobQueue jobs);
 
 
 #endif

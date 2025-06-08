@@ -16,7 +16,7 @@ typedef struct sync_info_mem_store {
 
 }sync_info_mem_store;
 
-node* new_node(SyncEntry new_entry,node* next) {
+static node* new_node(SyncEntry new_entry,node* next) {
     node* new = malloc(sizeof(node));
     if (new == NULL) return NULL;
     new->entry = new_entry;

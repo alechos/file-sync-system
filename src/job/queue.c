@@ -23,7 +23,7 @@ typedef struct job_queue{
     pthread_cond_t not_full;
 } job_queue;
 
-node* new_node(Job new_job,node* next) {
+static node* new_node(Job new_job,node* next) {
     node* new = malloc(sizeof(node));
     new->node_job = new_job;
     new->next = next;
@@ -55,7 +55,6 @@ int jq_in_queue(job_queue *q,Job* job) {
     curr = q->front;
     while(curr!=NULL) {
         curr_job = curr->node_job;
-//      WIF : make sure job fields are thread safe
         if(compare_uris(&curr_job.src,&job->src) && !strcmp(curr_job.fn,job->fn)) {
             pthread_mutex_unlock(&q->mutex);
             return 1;
@@ -140,6 +139,10 @@ int jq_dequeue(job_queue* q,Job* out) {
     pthread_mutex_lock(&q->mutex);
     while(q->size<=0) {
         pthread_cond_wait(&q->not_empty,&q->mutex);
+        if(q->shutdown_flag) {
+            pthread_mutex_unlock(&q->mutex);
+            return -1;
+        }
     }
 
     *out = q->front->node_job;
@@ -158,6 +161,7 @@ int jq_dequeue(job_queue* q,Job* out) {
 int jq_cancel(job_queue* q,char* dir) {
     node* curr;
     Job curr_job;
+    int flag = -1;
 
     pthread_mutex_lock(&q->mutex);
 
@@ -166,11 +170,12 @@ int jq_cancel(job_queue* q,char* dir) {
         curr_job = curr->node_job;
         if(!strcmp(curr_job.src.dir,dir)) {
             curr->node_job.valid = 0;
+            flag = 0;
         }
         curr = curr->next;
     }
     pthread_mutex_unlock(&q->mutex);
-    return 0;
+    return flag;
 
 }
 
@@ -182,6 +187,7 @@ int jq_shutdown(job_queue* q) {
     }
     q->shutdown_flag = 1;
     pthread_mutex_unlock(&q->mutex);
+    pthread_cond_broadcast(&q->not_empty);
     return 0;
 }
 
@@ -191,6 +197,6 @@ int jq_is_shutdown(job_queue* q) {
     pthread_mutex_lock(&q->mutex);
     ret = q->shutdown_flag;
     pthread_mutex_unlock(&q->mutex);
-    
+
     return ret;
 }

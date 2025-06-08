@@ -44,14 +44,6 @@ int get_status_name(STATUS status,char *buff) {
 }
 
 
-void print_sync_entry(SyncEntry en) {
-    if(!en.valid) {
-        printf("Invalid entry!\n");
-        return;
-    }
-    printf("%s %s %d %ld %d %d\n",en.src.dir,en.dst.dir,en.status,en.sync_timestamp,en.error_count);
-}
-
 SyncEntry default_entry() {
     SyncEntry def;
     def.valid = false;

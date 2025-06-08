@@ -31,6 +31,5 @@ SyncEntry create_sync_entry(char* src, char* dst,time_t tm,STATUS st);
 /* Writes status name as a string in ```status_name```*/
 int get_status_name(STATUS status,char* status_name);
 /* Print a sync entry*/
-void print_sync_entry(SyncEntry);
 
 #endif

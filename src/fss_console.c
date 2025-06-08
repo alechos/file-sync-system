@@ -20,19 +20,18 @@
 bool loggable(char* line,char* response) {
     char *command;
     command = strtok(line," ");
-    if(!strcmp(command,"status")||!strcmp(command,"shutdown")) {
+    if(!strcmp(command,"shutdown")) {
         return false;
     }
 
-    if(strstr(response,"Directory not monitored") != NULL) return false;
+    if(strstr(response,"Directory not being synchronized") != NULL) return false;
     if(strstr(response,"Already in queue") != NULL) return false;
-    if(strstr(response,"Sync already in progress") != NULL) return false;
     return true;
 }
 
-int parse_args(char *log,char *host, char *port, int argc,char **argv) {
+int parse_args(char **log,char **host, char **port, int argc,char **argv) {
     int opt;
-    while((opt = getopt(argc,argv,"l:h:p"))!= -1) {
+    while((opt = getopt(argc,argv,"l:h:p:"))!= -1) {
         switch (opt) {
         case 'l':
             *log = optarg;
@@ -51,9 +50,9 @@ int parse_args(char *log,char *host, char *port, int argc,char **argv) {
     if(!(*log) || !(*host) || !(*port)) {
         fprintf(stderr,
             "Usage:\n"
-            "  ./fss_console -l <console=logfile>\n"
+            "  ./fss_console -l <console-logfile>\n"
             "                -h <host_IP>\n"
-            "                -p <hist_port\n"
+            "                -p <host_port\n"
         );
         return -1;
     } 
@@ -61,19 +60,20 @@ int parse_args(char *log,char *host, char *port, int argc,char **argv) {
     return 0;
 }
 int main(int argc,char **argv) {
-    int opt,sock,flag;
-    char host_ip[MAX_HOST_SIZE], host_port[MAX_PORT_SIZE];
+    int sock;
+    char *host_ip, *host_port;
     char packet[PACKET_SIZE],buffer[BUFSIZ];
     resource_id uri;
     FILE *log;
     char *log_fn = NULL;
     ssize_t size;
-    flag = 0;
 
-    //signal(SIGPIPE,SIG_IGN);
     // Parse arguments
-    if (parse_args(log_fn,host_ip,host_port,argc,argv) == -1) return -1;
+    if (parse_args(&log_fn,&host_ip,&host_port,argc,argv) == -1) return -1;
 
+    snprintf(uri.host,MAX_HOST_SIZE,"%s",host_ip);
+    snprintf(uri.port,MAX_PORT_SIZE,"%s",host_port);
+    
     // Opening pipe to manager
     if(connect_peer(&uri,&sock) == -1) {
         printf("Error connecting to host.\n");
@@ -100,7 +100,6 @@ int main(int argc,char **argv) {
             exit(1);
         }
         
-
         // Read and log responses until a whole message group has been received
         while((size = receive_msg(sock,buffer)) > 0) {
             if(!strcmp(buffer,MSG_END)) break;
