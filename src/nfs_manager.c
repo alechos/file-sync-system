@@ -241,18 +241,23 @@ int parse_command(char *line,Command *command) {
 
 }
 
-// buff must be at least of size PACKET_SIZE
-int get_list(char *buff,char *path,int sock) {
+int get_list(char *buff, char *path, int sock) {
     char msg[PACKET_SIZE];
-    snprintf(msg,PACKET_SIZE - 1,LIST_OP_STR,path);
-    if(send_msg(msg,strlen(msg) + 1,sock) != - 1) {
-        if(receive_msg(sock,buff) <= 0) {
-            return -1;
-        }
-        return 0;
-    }
+    char filename[MAX_MSG_SIZE];
+    int offset = 0;
 
-    return -1;
+    snprintf(msg, PACKET_SIZE - 1, LIST_OP_STR, path);
+    if (send_msg(msg, strlen(msg) + 1, sock) == -1)
+        return -1;
+
+    while (1) {
+        if (receive_msg(sock, filename) <= 0)
+            return -1;
+        if (filename[0] == '.')
+            break;
+        offset += snprintf(buff + offset, PACKET_SIZE - offset, "%s", filename);
+    }
+    return 0;
 }
 
 ssize_t get_buff_line(char* line, char** buff) {

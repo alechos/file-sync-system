@@ -127,29 +127,23 @@ int pull(char *path, int sock) {
     return 0;
 }
 
-int list(char *path,int sock) {
+
+int list(char *path, int sock) {
     DIR *dir;
     struct dirent *entry;
-    char files[PACKET_SIZE] = {0};
-    int offset = 0;
-
+    char msg[MAX_MSG_SIZE];
+    
     dir = opendir(path);
-    if(!dir) {
-        files[offset] = '.';
-        send_msg(files,strlen(files) + 1,sock); 
-        return -1;       
-    }
-
-    while((entry = readdir(dir)) != NULL && offset < PACKET_SIZE) {
-        if(entry->d_name[0] == '.') continue;
-        offset += snprintf(files + offset, PACKET_SIZE - offset, "%s\n", entry->d_name);
-    }
-    files[offset] = '.';
-
-    if(send_msg(files,strlen(files) + 1,sock) == -1) {
+    if (!dir) {
+        send_msg(".\n", 3, sock);
         return -1;
     }
-
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        snprintf(msg, MAX_MSG_SIZE, "%s\n", entry->d_name);
+        send_msg(msg, strlen(msg) + 1, sock);
+    }
+    send_msg(".\n", 3, sock);
     closedir(dir);
     return 0;
 }
