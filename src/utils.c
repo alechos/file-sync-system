@@ -66,6 +66,8 @@ ssize_t receive_msg(int sock_in,char* buff) {
 
     if(read_buff((char*)&net_size,sizeof(uint32_t),sock_in) == -1) return -1;
     msg_size = ntohl(net_size);
+
+    if (msg_size > PACKET_SIZE) return -1;
     if((bytes_read = read_buff(buff,msg_size,sock_in)) == -1) return -1;
 
     return bytes_read;
@@ -146,10 +148,12 @@ int get_listener(short port) {
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &option, sizeof(option));
 
     if(bind(listen_sock,(struct sockaddr*) &host,sizeof(host)) == -1) {
+        perror("bind");
         return -1;
     }
 
     if(listen(listen_sock,MAX_BACKLOG) == -1) {
+        perror("listen");
         return -1;
     }
 

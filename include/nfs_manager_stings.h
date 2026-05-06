@@ -1,5 +1,5 @@
-#ifndef FSS_MANAGER_STRING_H
-#define FSS_MANAGER_STRING_H
+#ifndef NFS_MANAGER_STRING_H
+#define NFS_MANAGER_STRING_H
 
 // Log formating strings
 #define ADDED_DIR_STR "[%s] Added file: %s -> %s\n"

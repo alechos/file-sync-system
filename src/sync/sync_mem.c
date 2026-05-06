@@ -32,6 +32,7 @@ int sm_is_empty(sync_info_mem_store* sm) {
 sync_info_mem_store* sm_create() {
     sync_info_mem_store* sm;
     sm = malloc(sizeof(sync_info_mem_store));
+    if (sm == NULL) return NULL;
     sm->head = NULL;
     sm->tail = NULL;
     sm->entries = 0;

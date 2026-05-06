@@ -50,7 +50,7 @@ int parse_args(char **log,char **host, char **port, int argc,char **argv) {
     if(!(*log) || !(*host) || !(*port)) {
         fprintf(stderr,
             "Usage:\n"
-            "  ./fss_console -l <console-logfile>\n"
+            "  ./nfs_console -l <console-logfile>\n"
             "                -h <host_IP>\n"
             "                -p <host_port\n"
         );

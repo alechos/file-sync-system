@@ -3,6 +3,8 @@
 #include "config.h"
 #include <unistd.h>
 #include <time.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 typedef struct resource_id{
     char dir[MAX_PATH_SIZE];

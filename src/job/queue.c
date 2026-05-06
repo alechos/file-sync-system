@@ -33,6 +33,7 @@ static node* new_node(Job new_job,node* next) {
 job_queue *jq_create(size_t max_size) {
 
     job_queue *new_queue = malloc(sizeof(struct job_queue));
+    if(new_queue == NULL) return NULL;
     new_queue->shutdown_flag = 0;
     new_queue->front = NULL;
     new_queue->rear = NULL;

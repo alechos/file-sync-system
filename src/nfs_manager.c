@@ -65,7 +65,7 @@ int parse_args(char **logfile,char **cfgfile,int *max_n,int *port,size_t *buff_s
     if(!(*logfile) || !(*cfgfile)) {
         fprintf(stderr,
             "Usage:\n"
-            "  ./fss_manager -l <manager_logfile>\n"
+            "  ./nfs_manager -l <manager_logfile>\n"
             "                -c <config_file>\n"
             "                -n <worker_limit>\n"
             "                -p <port>\n"
@@ -111,7 +111,7 @@ int extract_details(Job job,Report report,char *err_msg,char *pulled,char* pushe
     if(report.pushed <= 0) { //push error occured
         snprintf(pushed,MAX_MSG_SIZE,"File: %s - %s",job.fn,err_msg); 
     } else {
-        snprintf(pushed,MAX_MSG_SIZE,"%zd bytes pushed",report.pulled);
+        snprintf(pushed,MAX_MSG_SIZE,"%zd bytes pushed",report.pushed);
     }
 
     return 0;
@@ -557,7 +557,7 @@ int issue_jobs(resource_id *src,resource_id *dst,JobQueue jobs) {
     return 0;
 }
 
-/* Initializes fss manager data_strcutures based on config file given.
+/* Initializes nfs manager data_strcutures based on config file given.
     Returns -1 on failure.
 */
 int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQueue jobs) {
@@ -583,15 +583,19 @@ int init_manager(const char *conf_file_path,const char *log,SyncMem sm_info,JobQ
         
         entry = create_sync_entry(src,dst,time(NULL),ACTIVE);    
 
-        if(issue_jobs(&entry.src,&entry.dst,jobs)) return -1;
-        sm_add_entry(sm_info,entry);
+        if(issue_jobs(&entry.src,&entry.dst,jobs)) {
+            fclose(LOG);
+            fclose(config_file);
+            return -1;
+        }
+         sm_add_entry(sm_info,entry);
     }
     fclose(config_file);
     return 0;
 }
 
 int main(int argc, char **argv) {
-    struct sockaddr_in manager_addr; //maybe i have to change this WIF
+    struct sockaddr_in manager_addr; 
     socklen_t addrlen;
 
     pthread_t *worker_pool;
@@ -615,6 +619,10 @@ int main(int argc, char **argv) {
     jobs = jq_create(buff_sz);
     worker_pool = malloc(max_n*sizeof(pthread_t));
 
+    if(watch_dirs == NULL || jobs == NULL || worker_pool == NULL) {
+        perror("malloc");
+        return -1;
+    }
     // Initialize system by loading config entries and preparing jobs
     spawn_workers(worker_pool,max_n,jobs); 
 

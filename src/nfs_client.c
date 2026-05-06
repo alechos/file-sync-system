@@ -45,6 +45,8 @@ int parse_header(char *header,header_info *head) {
     }
     
     arg = strtok_r(NULL," ",&buff_ptr);
+    if(arg == NULL) return -1;
+    
     snprintf(head->path,MAX_PATH_SIZE,"%s",arg);
     
     if (head->op == PUSH) {
@@ -173,7 +175,7 @@ int push(header_info *header,int sock) {
     int fd;
     char msg[PACKET_SIZE];
 
-    if(header->chunk_size == -1) { //when would this happen?? WIF
+    if(header->chunk_size == -1) { 
         fd = open(header->path,O_WRONLY | O_CREAT | O_TRUNC,0644);
         receive_msg(sock,msg);  //read actual header
         parse_header(msg,header);
@@ -197,7 +199,6 @@ int handle_coms(int com_sock) {
     header_info header;
     char packet[PACKET_SIZE];
     int flag = 1;
-    //WIF i dont think the loop is needed, we only handle one op per connection anyways
     
     while(flag) {
         //receive command
@@ -268,7 +269,7 @@ int main(int argc, char** argv) {
     listen_sock = get_listener(port);
 
     for(int i = 0; i < MAX_WORKERS;i++) {
-        pthread_create(&workers[i],NULL,handle_peer,(void*) &listen_sock); //listen sock is local! WIF
+        pthread_create(&workers[i],NULL,handle_peer,(void*) &listen_sock); 
     }
 
     printf("Running, enter any character to shut down.\n");
