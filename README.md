@@ -116,9 +116,9 @@ Example:
 
 | Command                   | Description                                                                                                                                                                                           |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADD <src_uri> <dst_uri>` | Begin syncing a new source to destination directory pair. If the pair is already queued, the manager skips it and replies "Already in queue". Only flat directories are supported. No subdirectories. |
-| `CANCEL <src_uri>`        | Cancel pending transfers for a source directory                                                                                                                                                       |
-| `SHUTDOWN`                | Drain the job queue and shut down the manager gracefully                                                                                                                                              |
+| `add <src_uri> <dst_uri>` | Begin syncing a new source to destination directory pair. If the pair is already queued, the manager skips it and replies "Already in queue". Only flat directories are supported. No subdirectories. |
+| `cancel <src_uri>`        | Cancel pending transfers for a source directory                                                                                                                                                       |
+| `shutdown`                | Drain the job queue and shut down the manager gracefully                                                                                                                                              |
 
 ## Logging
 
