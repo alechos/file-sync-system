@@ -642,7 +642,7 @@ int main(int argc, char **argv) {
 
         connected_flag = 0;
         while(!connected_flag) {
-            connected_flag = process_command(console_sock,buff_sz,watch_dirs,jobs,worker_pool);
+            connected_flag = process_command(console_sock,max_n,watch_dirs,jobs,worker_pool);
         }
 
         if(connected_flag == 1) {
