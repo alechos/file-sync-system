@@ -104,7 +104,7 @@ Each line defines a sync pair:
 <source_uri> <destination_uri>
 ```
 
-URIs follow the format `/<directory>@<host_ip>:<port>`. The leading `/` is required, but the path is not an absolute system path. It is resolved relative to the working directory of the `nfs_client` process. Each client has its own root, and all paths are interpreted from there. Source and destination directories must not overlap. No entry may be a subdirectory of another.
+URIs follow the format `/<directory>@<host_ip>:<port>`. The leading `/` is required, but the path is not an absolute system path. It is resolved relative to the working directory of the `nfs_client` process. Each client has its own root, and all paths are interpreted from there. Source and destination directories must not overlap.
 
 Example:
 
